@@ -2,17 +2,15 @@
   "name": "jawbot",
   "private": true,
   "version": "0.1.0",
-  "description": "Job-based Linux runtime with swappable channels (UI now, messaging later)",
+  "description": "JawBot Linux backend — chat gateway, orchestrator, skills, runtime",
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run dev -w @jawbot/server & npm run dev -w @jawbot/ui",
-    "dev:server": "npm run dev -w @jawbot/server",
-    "dev:ui": "npm run dev -w @jawbot/ui",
-    "build": "npm run build -w @jawbot/shared && npm run build -w @jawbot/server && npm run build -w @jawbot/ui",
+    "dev": "npm run build -w @jawbot/shared && npm run dev -w @jawbot/server",
+    "build": "npm run build -w @jawbot/shared && npm run build -w @jawbot/server",
     "start": "npm run start -w @jawbot/server",
-    "typecheck": "npm run typecheck -w @jawbot/shared && npm run typecheck -w @jawbot/server && npm run typecheck -w @jawbot/ui"
+    "typecheck": "npm run typecheck -w @jawbot/shared && npm run typecheck -w @jawbot/server"
   },
   "engines": {
     "node": ">=20"
