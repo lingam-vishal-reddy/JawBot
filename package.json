@@ -1,0 +1,20 @@
+{
+  "name": "jawbot",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Job-based Linux runtime with swappable channels (UI now, messaging later)",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @jawbot/server & npm run dev -w @jawbot/ui",
+    "dev:server": "npm run dev -w @jawbot/server",
+    "dev:ui": "npm run dev -w @jawbot/ui",
+    "build": "npm run build -w @jawbot/shared && npm run build -w @jawbot/server && npm run build -w @jawbot/ui",
+    "start": "npm run start -w @jawbot/server",
+    "typecheck": "npm run typecheck -w @jawbot/shared && npm run typecheck -w @jawbot/server && npm run typecheck -w @jawbot/ui"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
