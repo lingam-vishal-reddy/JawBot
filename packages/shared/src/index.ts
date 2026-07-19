@@ -1,5 +1,5 @@
-/** Channel that owns the conversation. Slack plugs in later. */
-export type ChannelKind = "web_ui" | "api" | "system";
+/** Channel that owns the conversation. Slack / other messengers plug in later. */
+export type ChannelKind = "jaws" | "web_ui" | "api" | "system";
 
 export type Role = "user" | "assistant" | "system";
 

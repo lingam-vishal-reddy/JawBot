@@ -4,6 +4,8 @@ Linux backend for a chat-driven workstation agent.
 
 Clients (e.g. **[Jaws](https://github.com/sunnydie86/Jaws)**) send chat messages. The orchestrator + LLM decides whether to run skills, and replies only when useful. Jobs are internal — clients never create them.
 
+PoC focus: say “open a new shell tab” from Jaws → a visible terminal opens on this Linux desktop.
+
 ## HLD
 
 ```text

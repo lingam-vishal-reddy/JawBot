@@ -10,7 +10,7 @@
     "dev": "npm run build -w @jawbot/shared && npm run dev -w @jawbot/server",
     "build": "npm run build -w @jawbot/shared && npm run build -w @jawbot/server",
     "start": "npm run start -w @jawbot/server",
-    "typecheck": "npm run typecheck -w @jawbot/shared && npm run typecheck -w @jawbot/server"
+    "typecheck": "npm run build -w @jawbot/shared && npm run typecheck -w @jawbot/shared && npm run typecheck -w @jawbot/server"
   },
   "engines": {
     "node": ">=20"
