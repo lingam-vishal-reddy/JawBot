@@ -1,5 +1,5 @@
 import type { PlannedAction } from "@jawbot/shared";
-import { isSkillName } from "@jawbot/shared";
+import { isToolName } from "@jawbot/shared";
 import type { LlmClient, PlanRequest, PlanResult, ReplyRequest } from "./types.js";
 
 interface ChatCompletionResponse {
@@ -29,18 +29,23 @@ export class OpenAiLlm implements LlmClient {
   }
 
   async plan(req: PlanRequest): Promise<PlanResult> {
-    const skillList = req.skills
-      .map((s) => `- ${s.name}: ${s.description}`)
+    const toolList = req.tools
+      .map((t) => `- ${t.name}: ${t.description}`)
       .join("\n");
+
+    const skillsBlock = req.skillsContext?.trim()
+      ? `\n\nUser-supplied skills (plain-text playbooks). Use these as context; ` +
+        `if the user asks to run one, translate its steps into run_command actions:\n${req.skillsContext}`
+      : "";
 
     const system = `You are JawBot's planner for a Linux workstation agent.
 You receive a user chat message. Decide:
-1) which skills (if any) to invoke
+1) which tools (if any) to invoke
 2) whether the user needs a chat reply
 
 Rules:
 - Do NOT treat every message as work. Pure conversation → no actions.
-- Only use listed skills.
+- Only use listed tools.
 - needsReply=false only when silence is clearly better (rare). Prefer a short reply.
 - reply should be natural chat, not a build log or notification dump.
 - For run_command, put the exact shell command in input.command.
@@ -48,14 +53,14 @@ Rules:
 
 Return ONLY JSON:
 {
-  "actions": [{"skill":"open_shell"|"run_command","input":{}}],
+  "actions": [{"tool":"open_shell"|"run_command","input":{}}],
   "needsReply": true,
   "reply": "string or null if you want to phrase after actions",
   "reasoning": "short"
 }
 
-Available skills:
-${skillList}`;
+Available tools:
+${toolList}${skillsBlock}`;
 
     const history = req.history.slice(-12).map((m) => ({
       role: m.role === "assistant" ? "assistant" : "user",
@@ -149,11 +154,13 @@ function parsePlan(content: string): PlanResult {
   if (Array.isArray(obj.actions)) {
     for (const item of obj.actions) {
       if (!item || typeof item !== "object") continue;
-      const skill = (item as { skill?: unknown }).skill;
+      const tool =
+        (item as { tool?: unknown }).tool ??
+        (item as { skill?: unknown }).skill;
       const input = (item as { input?: unknown }).input;
-      if (!isSkillName(skill)) continue;
+      if (!isToolName(tool)) continue;
       actions.push({
-        skill,
+        tool,
         input:
           input && typeof input === "object" && !Array.isArray(input)
             ? (input as Record<string, unknown>)
@@ -165,7 +172,12 @@ function parsePlan(content: string): PlanResult {
   return {
     actions,
     needsReply: obj.needsReply !== false,
-    reply: typeof obj.reply === "string" ? obj.reply : obj.reply === null ? null : undefined,
+    reply:
+      typeof obj.reply === "string"
+        ? obj.reply
+        : obj.reply === null
+          ? null
+          : undefined,
     reasoning: typeof obj.reasoning === "string" ? obj.reasoning : undefined,
   };
 }

@@ -3,8 +3,14 @@ export type ChannelKind = "jaws" | "web_ui" | "api" | "system";
 
 export type Role = "user" | "assistant" | "system";
 
-/** Built-in skill names. Orchestrator chooses these; clients never pick them. */
-export type SkillName = "open_shell" | "run_command";
+/**
+ * Built-in tool names — the low-level machine primitives the orchestrator can
+ * invoke. Clients never pick these; the planner does.
+ *
+ * NOTE: these used to be called "skills". Tools are the executable primitives;
+ * Skills (see below) are plain-text playbooks a user supplies as context.
+ */
+export type ToolName = "open_shell" | "run_command";
 
 export type JobStatus =
   | "queued"
@@ -17,7 +23,7 @@ export type JobStatus =
 export interface Job {
   id: string;
   sessionId: string;
-  skill: SkillName;
+  tool: ToolName;
   input: Record<string, unknown>;
   status: JobStatus;
   createdAt: string;
@@ -25,6 +31,8 @@ export interface Job {
   finishedAt?: string;
   error?: string;
   result?: Record<string, unknown>;
+  /** Set when this job was created as a step of a skill run. */
+  skillRunId?: string;
 }
 
 export type JobEventType =
@@ -36,7 +44,7 @@ export type JobEventType =
   | "log.chunk"
   | "skill.progress";
 
-/** Internal telemetry for skills/runtime. Not the primary UX stream. */
+/** Internal telemetry for tools/runtime. Not the primary UX stream. */
 export interface JobEvent {
   id: string;
   jobId: string;
@@ -73,7 +81,7 @@ export interface PostMessageRequest {
 
 /** What the planner decided to do for one user turn. */
 export interface PlannedAction {
-  skill: SkillName;
+  tool: ToolName;
   input: Record<string, unknown>;
 }
 
@@ -91,6 +99,106 @@ export interface RunCommandInput {
   visible?: boolean;
 }
 
-export function isSkillName(value: unknown): value is SkillName {
+export function isToolName(value: unknown): value is ToolName {
   return value === "open_shell" || value === "run_command";
+}
+
+/* -------------------------------------------------------------------------- */
+/* Skills                                                                     */
+/*                                                                            */
+/* A Skill is user-supplied context in plain language — a playbook that tells */
+/* JawBot how to accomplish something. Unlike tools, skills are not code:     */
+/* they carry a description, trigger phrases, and one or more runnable tasks. */
+/* Each task is a sequence of steps that ultimately run via tools, and can be */
+/* tracked for status updates.                                                */
+/* -------------------------------------------------------------------------- */
+
+/** One command in a skill task. Executed on the Linux runtime. */
+export interface SkillTaskStep {
+  name: string;
+  command: string;
+  cwd?: string;
+  timeoutMs?: number;
+}
+
+/** A runnable unit of a skill (e.g. "setup", "build"). */
+export interface SkillTask {
+  id: string;
+  name: string;
+  description: string;
+  /** Natural-language phrases that trigger this task. */
+  triggers: string[];
+  steps: SkillTaskStep[];
+}
+
+/** A plain-text capability the user teaches JawBot. */
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  /** Natural-language phrases that identify this skill. */
+  triggers: string[];
+  /** Plain-text playbook / context handed to the planner. */
+  context: string;
+  tasks: SkillTask[];
+}
+
+/** Lightweight skill view for API/listing (omits raw step commands). */
+export interface SkillDescriptor {
+  id: string;
+  name: string;
+  description: string;
+  triggers: string[];
+  tasks: Array<{
+    id: string;
+    name: string;
+    description: string;
+    triggers: string[];
+    stepCount: number;
+  }>;
+}
+
+export type SkillRunStatus = JobStatus;
+
+export interface SkillRunStep {
+  index: number;
+  name: string;
+  command: string;
+  status: SkillRunStatus;
+  jobId?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  error?: string;
+}
+
+/** A single invocation of a skill task, tracked for status updates. */
+export interface SkillRun {
+  id: string;
+  sessionId: string;
+  skillId: string;
+  skillName: string;
+  taskId: string;
+  taskName: string;
+  status: SkillRunStatus;
+  steps: SkillRunStep[];
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  error?: string;
+}
+
+export function toSkillDescriptor(skill: Skill): SkillDescriptor {
+  return {
+    id: skill.id,
+    name: skill.name,
+    description: skill.description,
+    triggers: skill.triggers,
+    tasks: skill.tasks.map((t) => ({
+      id: t.id,
+      name: t.name,
+      description: t.description,
+      triggers: t.triggers,
+      stepCount: t.steps.length,
+    })),
+  };
 }

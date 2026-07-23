@@ -22,7 +22,7 @@ export class HeuristicLlm implements LlmClient {
     if (wantsOpenShell(lower)) {
       const cwd = extractCwd(text);
       const action: PlannedAction = {
-        skill: "open_shell",
+        tool: "open_shell",
         input: {
           title: "JawBot Shell",
           tab: true,
@@ -44,7 +44,7 @@ export class HeuristicLlm implements LlmClient {
       return {
         actions: [
           {
-            skill: "run_command",
+            tool: "run_command",
             input: {
               command: run.command,
               visible: run.visible,

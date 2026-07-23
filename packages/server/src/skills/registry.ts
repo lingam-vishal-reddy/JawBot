@@ -1,35 +1,90 @@
-import type { SkillName } from "@jawbot/shared";
-import type { Skill } from "./types.js";
-import { openShellSkill } from "./open-shell.js";
-import { runCommandSkill } from "./run-command.js";
+import type { Skill, SkillDescriptor, SkillTask } from "@jawbot/shared";
+import { toSkillDescriptor } from "@jawbot/shared";
+import { chromiumAndroidSkill } from "./chromium-android.js";
 
-const skills: Skill[] = [openShellSkill, runCommandSkill];
+const builtinSkills: Skill[] = [chromiumAndroidSkill];
 
+export interface SkillMatch {
+  skill: Skill;
+  task: SkillTask;
+}
+
+/**
+ * Holds plain-text Skills (user-supplied playbooks) and resolves natural
+ * language to a runnable skill task.
+ */
 export class SkillRegistry {
-  private readonly byName = new Map<SkillName, Skill>();
+  private readonly byId = new Map<string, Skill>();
 
-  constructor(list: Skill[] = skills) {
+  constructor(list: Skill[] = builtinSkills) {
     for (const skill of list) {
-      this.byName.set(skill.name, skill);
+      this.byId.set(skill.id, skill);
     }
-  }
-
-  get(name: SkillName): Skill {
-    const skill = this.byName.get(name);
-    if (!skill) {
-      throw new Error(`No skill registered: ${name}`);
-    }
-    return skill;
-  }
-
-  list(): Array<{ name: SkillName; description: string }> {
-    return [...this.byName.values()].map((s) => ({
-      name: s.name,
-      description: s.description,
-    }));
   }
 
   register(skill: Skill): void {
-    this.byName.set(skill.name, skill);
+    this.byId.set(skill.id, skill);
   }
+
+  get(id: string): Skill | undefined {
+    return this.byId.get(id);
+  }
+
+  all(): Skill[] {
+    return [...this.byId.values()];
+  }
+
+  list(): SkillDescriptor[] {
+    return this.all().map(toSkillDescriptor);
+  }
+
+  /** Plain-text context block for every skill, fed to the LLM planner. */
+  plannerContext(): string {
+    const skills = this.all();
+    if (skills.length === 0) return "";
+    return skills
+      .map((s) => {
+        const tasks = s.tasks
+          .map((t) => `    • ${t.id} — ${t.description}`)
+          .join("\n");
+        return `# Skill: ${s.name} (id: ${s.id})\n${s.context}\n  Tasks:\n${tasks}`;
+      })
+      .join("\n\n");
+  }
+
+  /**
+   * Resolve a user message to a skill task. A match requires a skill trigger
+   * AND a task trigger to be present (e.g. "build chromium").
+   */
+  match(text: string): SkillMatch | undefined {
+    const lower = text.toLowerCase();
+    for (const skill of this.all()) {
+      if (!hasTrigger(lower, skill.triggers)) continue;
+      for (const task of skill.tasks) {
+        if (hasTrigger(lower, task.triggers)) {
+          return { skill, task };
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /** True when a skill is referenced but no specific task trigger matched. */
+  matchSkillOnly(text: string): Skill | undefined {
+    const lower = text.toLowerCase();
+    for (const skill of this.all()) {
+      if (hasTrigger(lower, skill.triggers)) return skill;
+    }
+    return undefined;
+  }
+}
+
+function hasTrigger(lowerText: string, triggers: string[]): boolean {
+  return triggers.some((t) => matchesWord(lowerText, t.toLowerCase()));
+}
+
+/** Match a trigger phrase on word boundaries to avoid accidental substrings. */
+function matchesWord(text: string, phrase: string): boolean {
+  const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|\\W)${escaped}(\\W|$)`).test(text);
 }

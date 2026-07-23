@@ -12,7 +12,10 @@ import type { JobStore } from "../jobs/store.js";
 import type { LlmClient } from "../llm/types.js";
 import type { LinuxRuntime } from "../runtime/linux.js";
 import type { SessionStore } from "../sessions/store.js";
+import type { ToolRegistry } from "../tools/registry.js";
 import type { SkillRegistry } from "../skills/registry.js";
+import type { SkillRunStore } from "../skills/runs.js";
+import { SkillRunner, formatRunsStatus } from "../skills/runner.js";
 
 export interface HandleMessageResult {
   userMessage: ChatMessage;
@@ -21,8 +24,11 @@ export interface HandleMessageResult {
 }
 
 /**
- * Chat orchestrator: user message in → optional jobs → optional LLM reply.
- * Clients never create jobs; the planner decides.
+ * Chat orchestrator: user message in → optional skill run / tool jobs →
+ * optional LLM reply. Clients never create jobs; the planner decides.
+ *
+ * Skills (plain-text playbooks) are matched deterministically here so they work
+ * even with the heuristic planner, and their context is also fed to the LLM.
  */
 export class Orchestrator {
   constructor(
@@ -30,9 +36,12 @@ export class Orchestrator {
     private readonly jobs: JobStore,
     private readonly jobEvents: EventBus,
     private readonly chat: ChatBus,
-    private readonly skills: SkillRegistry,
+    private readonly tools: ToolRegistry,
     private readonly runtime: LinuxRuntime,
     private readonly llm: LlmClient,
+    private readonly skills: SkillRegistry,
+    private readonly skillRuns: SkillRunStore,
+    private readonly skillRunner: SkillRunner,
   ) {}
 
   createSession(channel: ChannelKind = "web_ui"): Session {
@@ -68,6 +77,57 @@ export class Orchestrator {
       ts: new Date().toISOString(),
     });
 
+    // 1) Status queries about running skill tasks.
+    if (isStatusQuery(trimmed)) {
+      const status = formatRunsStatus(this.skillRuns.listForSession(sessionId));
+      const assistantMessage = this.publishMessage({
+        id: randomUUID(),
+        sessionId,
+        role: "assistant",
+        content: status,
+        ts: new Date().toISOString(),
+      });
+      return { userMessage, assistantMessage, jobs: [] };
+    }
+
+    // 2) Explicit skill task trigger (e.g. "set up chromium", "build chromium").
+    const match = this.skills.match(trimmed);
+    if (match) {
+      const run = this.skillRunner.start(sessionId, match.skill, match.task);
+      const assistantMessage = this.publishMessage({
+        id: randomUUID(),
+        sessionId,
+        role: "assistant",
+        content:
+          `Triggering ${match.skill.name} · ${match.task.name} ` +
+          `(${match.task.steps.length} step${
+            match.task.steps.length === 1 ? "" : "s"
+          }). I'll post progress here — ask “status” anytime.`,
+        ts: new Date().toISOString(),
+      });
+      const runJobs = this.jobs
+        .list(Number.MAX_SAFE_INTEGER)
+        .filter((j) => j.skillRunId === run.id);
+      return { userMessage, assistantMessage, jobs: runJobs };
+    }
+
+    // 3) Skill named without a task → list what it can do.
+    const skillOnly = this.skills.matchSkillOnly(trimmed);
+    if (skillOnly) {
+      const tasks = skillOnly.tasks
+        .map((t) => `“${skillOnly.name.toLowerCase().split(" ")[0]} ${t.id}” — ${t.description}`)
+        .join("\n");
+      const assistantMessage = this.publishMessage({
+        id: randomUUID(),
+        sessionId,
+        role: "assistant",
+        content: `${skillOnly.name} can:\n${tasks}`,
+        ts: new Date().toISOString(),
+      });
+      return { userMessage, assistantMessage, jobs: [] };
+    }
+
+    // 4) Fall through to the LLM planner for general tool use / chat.
     const history = this.sessions.listMessages(sessionId).filter(
       (m) => m.id !== userMessage.id,
     );
@@ -75,7 +135,8 @@ export class Orchestrator {
     const plan = await this.llm.plan({
       history,
       userMessage: trimmed,
-      skills: this.skills.list(),
+      tools: this.tools.list(),
+      skillsContext: this.skills.plannerContext(),
     });
 
     const jobs: Job[] = [];
@@ -150,14 +211,14 @@ export class Orchestrator {
     const job: Job = {
       id: randomUUID(),
       sessionId,
-      skill: action.skill,
+      tool: action.tool,
       input: action.input ?? {},
       status: "queued",
       createdAt: new Date().toISOString(),
     };
     this.jobs.upsert(job);
     this.jobEvents.emit(job.id, sessionId, "job.accepted", {
-      skill: job.skill,
+      tool: job.tool,
     });
 
     this.jobs.update(job.id, {
@@ -165,12 +226,12 @@ export class Orchestrator {
       startedAt: new Date().toISOString(),
     });
     this.jobEvents.emit(job.id, sessionId, "job.started", {
-      skill: job.skill,
+      tool: job.tool,
     });
 
     try {
-      const skill = this.skills.get(action.skill);
-      const { result, summary } = await skill.run({
+      const tool = this.tools.get(action.tool);
+      const { result, summary } = await tool.run({
         job,
         runtime: this.runtime,
         events: this.jobEvents,
@@ -208,4 +269,12 @@ export class Orchestrator {
       throw err;
     }
   }
+}
+
+function isStatusQuery(text: string): boolean {
+  const lower = text.toLowerCase();
+  if (/\b(status|progress)\b/.test(lower)) return true;
+  return /\bhow('?s| is| are|zit)?\b.*\b(going|build|setup|coming|it|things)\b/.test(
+    lower,
+  );
 }

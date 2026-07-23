@@ -1,14 +1,17 @@
-import type { ChatMessage, PlannedAction, SkillName } from "@jawbot/shared";
+import type { ChatMessage, PlannedAction, ToolName } from "@jawbot/shared";
 
-export interface SkillDescriptor {
-  name: SkillName;
+export interface ToolDescriptor {
+  name: ToolName;
   description: string;
 }
 
 export interface PlanRequest {
   history: ChatMessage[];
   userMessage: string;
-  skills: SkillDescriptor[];
+  /** Low-level machine primitives the planner may invoke. */
+  tools: ToolDescriptor[];
+  /** Plain-text playbooks (skills) the user has supplied, for extra context. */
+  skillsContext?: string;
 }
 
 /**
@@ -34,7 +37,7 @@ export interface ReplyRequest {
 }
 
 export interface LlmClient {
-  /** Decide whether to act, what skills to call, and whether to speak. */
+  /** Decide whether to act, what tools to call, and whether to speak. */
   plan(req: PlanRequest): Promise<PlanResult>;
   /** Optional second pass to phrase the reply after actions finish. */
   phraseReply?(req: ReplyRequest): Promise<string | null>;

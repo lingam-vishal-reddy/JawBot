@@ -5,14 +5,20 @@ import type { Orchestrator } from "../orchestrator/index.js";
 import type { SessionStore } from "../sessions/store.js";
 import type { JobStore } from "../jobs/store.js";
 import type { EventBus } from "../events/bus.js";
+import type { ToolRegistry } from "../tools/registry.js";
 import type { SkillRegistry } from "../skills/registry.js";
+import type { SkillRunStore } from "../skills/runs.js";
+import type { SkillRunner } from "../skills/runner.js";
 
 export function createHttpApp(deps: {
   orchestrator: Orchestrator;
   sessions: SessionStore;
   jobs: JobStore;
   jobEvents: EventBus;
+  tools: ToolRegistry;
   skills: SkillRegistry;
+  skillRuns: SkillRunStore;
+  skillRunner: SkillRunner;
 }) {
   const app = express();
   app.use(cors());
@@ -27,8 +33,53 @@ export function createHttpApp(deps: {
     });
   });
 
+  // Low-level machine primitives the orchestrator can invoke.
+  app.get("/tools", (_req, res) => {
+    res.json({ tools: deps.tools.list() });
+  });
+
+  // Plain-text playbooks the user can teach/trigger.
   app.get("/skills", (_req, res) => {
     res.json({ skills: deps.skills.list() });
+  });
+
+  app.get("/skills/runs", (req, res) => {
+    const sessionId =
+      typeof req.query.sessionId === "string" ? req.query.sessionId : undefined;
+    const runs = sessionId
+      ? deps.skillRuns.listForSession(sessionId)
+      : deps.skillRuns.list();
+    res.json({ runs });
+  });
+
+  app.get("/skills/runs/:runId", (req, res) => {
+    const run = deps.skillRuns.get(req.params.runId);
+    if (!run) {
+      res.status(404).json({ error: "skill run not found" });
+      return;
+    }
+    res.json({ run });
+  });
+
+  // Trigger a skill task directly (chat is the primary path; this is for APIs).
+  app.post("/skills/:id/tasks/:taskId/trigger", (req, res) => {
+    const skill = deps.skills.get(req.params.id);
+    if (!skill) {
+      res.status(404).json({ error: "skill not found" });
+      return;
+    }
+    const task = skill.tasks.find((t) => t.id === req.params.taskId);
+    if (!task) {
+      res.status(404).json({ error: "task not found" });
+      return;
+    }
+    const sessionId = (req.body ?? {}).sessionId as string | undefined;
+    if (!sessionId || !deps.sessions.get(sessionId)) {
+      res.status(400).json({ error: "valid sessionId is required" });
+      return;
+    }
+    const run = deps.skillRunner.start(sessionId, skill, task);
+    res.status(202).json({ run });
   });
 
   app.post("/sessions", (req, res) => {

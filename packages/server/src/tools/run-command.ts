@@ -1,7 +1,7 @@
 import type { RunCommandInput } from "@jawbot/shared";
-import type { Skill } from "./types.js";
+import type { Tool } from "./types.js";
 
-export const runCommandSkill: Skill = {
+export const runCommandTool: Tool = {
   name: "run_command",
   description: "Run a shell command on the Linux machine",
   async run({ job, runtime, events }) {

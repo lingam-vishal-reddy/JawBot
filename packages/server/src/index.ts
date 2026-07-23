@@ -4,7 +4,10 @@ import { ChatBus } from "./chat/bus.js";
 import { JobStore } from "./jobs/store.js";
 import { SessionStore } from "./sessions/store.js";
 import { LinuxRuntime } from "./runtime/linux.js";
+import { ToolRegistry } from "./tools/registry.js";
 import { SkillRegistry } from "./skills/registry.js";
+import { SkillRunStore } from "./skills/runs.js";
+import { SkillRunner } from "./skills/runner.js";
 import { Orchestrator } from "./orchestrator/index.js";
 import { createHttpApp } from "./gateway/http.js";
 import { attachChatSocket } from "./gateway/ws.js";
@@ -18,16 +21,29 @@ const chat = new ChatBus();
 const jobs = new JobStore();
 const sessions = new SessionStore();
 const runtime = new LinuxRuntime(process.env.DISPLAY ?? ":1");
+const tools = new ToolRegistry();
 const skills = new SkillRegistry();
+const skillRuns = new SkillRunStore();
+const skillRunner = new SkillRunner(
+  runtime,
+  skillRuns,
+  jobs,
+  jobEvents,
+  chat,
+  sessions,
+);
 const llm = createLlmClient();
 const orchestrator = new Orchestrator(
   sessions,
   jobs,
   jobEvents,
   chat,
-  skills,
+  tools,
   runtime,
   llm,
+  skills,
+  skillRuns,
+  skillRunner,
 );
 
 const app = createHttpApp({
@@ -35,7 +51,10 @@ const app = createHttpApp({
   sessions,
   jobs,
   jobEvents,
+  tools,
   skills,
+  skillRuns,
+  skillRunner,
 });
 const server = createServer(app);
 attachChatSocket(server, chat);
@@ -46,6 +65,9 @@ server.listen(PORT, HOST, () => {
   console.log(`[jawbot] DISPLAY=${process.env.DISPLAY ?? ":1"}`);
   console.log(`[jawbot] LLM=${process.env.JAWBOT_LLM ?? "heuristic"}`);
   console.log(
-    `[jawbot] skills: ${skills.list().map((s) => s.name).join(", ")}`,
+    `[jawbot] tools: ${tools.list().map((t) => t.name).join(", ")}`,
+  );
+  console.log(
+    `[jawbot] skills: ${skills.list().map((s) => s.id).join(", ")}`,
   );
 });

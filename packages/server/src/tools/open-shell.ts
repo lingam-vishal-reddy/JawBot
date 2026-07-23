@@ -1,7 +1,7 @@
 import type { OpenShellInput } from "@jawbot/shared";
-import type { Skill } from "./types.js";
+import type { Tool } from "./types.js";
 
-export const openShellSkill: Skill = {
+export const openShellTool: Tool = {
   name: "open_shell",
   description: "Open a visible terminal window/tab on the Linux desktop",
   async run({ job, runtime, events }) {
