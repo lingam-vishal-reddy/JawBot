@@ -32,8 +32,11 @@ Jaws (chat UI) ──message──► Gateway ──► Orchestrator + LLM
   sequence of steps (ultimately via `run_command`) and are tracked so you can get
   status updates.
 
-Built-in example skill: **`chromium-android`** — set up and build Chromium for
-Android. Trigger it from chat and poll progress:
+Skills are **plain-text `.txt` files** in the `skills/` folder — drop a file in
+the prescribed format (below) and it is loaded automatically at startup (set
+`JAWBOT_SKILLS_DIR` to use a different folder). Shipped example:
+`skills/chromium-android.txt` — set up and build Chromium for Android. Trigger
+it from chat and poll progress:
 
 ```bash
 # trigger
@@ -55,6 +58,40 @@ Skill endpoints:
 | `GET /skills/runs[?sessionId=]` | List skill task runs (status) |
 | `GET /skills/runs/:runId` | One run's step-by-step status |
 | `POST /skills/:id/tasks/:taskId/trigger` | Trigger a task (`{sessionId}`) |
+
+### Skill file format
+
+Each skill is one `.txt` file in `skills/`. Header key/value lines describe the
+skill, a `[context]` block holds the free-form playbook, and each `[task <id>]`
+block lists steps. A match needs a **skill trigger and a task trigger** in the
+message (e.g. "build chromium").
+
+```text
+id: my-skill                      # optional; defaults to the file name
+name: My Skill
+description: one-line summary
+triggers: foo, foo thing          # comma-separated
+
+[context]
+Free-form plain-text playbook handed to the planner as context.
+Everything up to the next [section] is kept verbatim.
+
+[task setup]
+name: My setup
+description: what this task does
+triggers: setup, set up, install
+
+step: First step name
+command: echo "runs on the Linux runtime via run_command"
+timeout: 600                      # seconds (or timeoutMs: for milliseconds)
+
+step: Second step
+command: make -j
+cwd: /some/dir                    # optional working directory
+```
+
+Lines starting with `#` are comments (except inside `[context]`). Steps run
+sequentially; the run stops and reports on the first failing step.
 
 ## Quick start
 
@@ -102,11 +139,12 @@ CORS is open for POC.
 ## Layout
 
 ```text
+skills/     User-authored skill playbooks (*.txt), loaded at startup
 packages/
   shared/   Session, Message, Job, Skill (types)
-  server/   gateway, orchestrator, llm, tools, skills, runtime
+  server/   gateway, orchestrator, llm, tools, skills (loader/registry/runner), runtime
 ```
 
 ## Later
 
-Slack channel, user-authored skills at runtime, workflows, auth — same message API.
+Slack channel, hot-reload of skill files, workflows, auth — same message API.

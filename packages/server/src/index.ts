@@ -6,6 +6,7 @@ import { SessionStore } from "./sessions/store.js";
 import { LinuxRuntime } from "./runtime/linux.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { SkillRegistry } from "./skills/registry.js";
+import { loadSkillsFromDir } from "./skills/loader.js";
 import { SkillRunStore } from "./skills/runs.js";
 import { SkillRunner } from "./skills/runner.js";
 import { Orchestrator } from "./orchestrator/index.js";
@@ -22,7 +23,8 @@ const jobs = new JobStore();
 const sessions = new SessionStore();
 const runtime = new LinuxRuntime(process.env.DISPLAY ?? ":1");
 const tools = new ToolRegistry();
-const skills = new SkillRegistry();
+const loaded = loadSkillsFromDir();
+const skills = new SkillRegistry(loaded.skills);
 const skillRuns = new SkillRunStore();
 const skillRunner = new SkillRunner(
   runtime,
@@ -67,7 +69,13 @@ server.listen(PORT, HOST, () => {
   console.log(
     `[jawbot] tools: ${tools.list().map((t) => t.name).join(", ")}`,
   );
+  const skillIds = skills.list().map((s) => s.id);
   console.log(
-    `[jawbot] skills: ${skills.list().map((s) => s.id).join(", ")}`,
+    `[jawbot] skills (${loaded.dir}): ${
+      skillIds.length ? skillIds.join(", ") : "none"
+    }`,
   );
+  for (const e of loaded.errors) {
+    console.warn(`[jawbot] skill load warning (${e.file}): ${e.error}`);
+  }
 });

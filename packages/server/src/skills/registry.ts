@@ -1,8 +1,5 @@
 import type { Skill, SkillDescriptor, SkillTask } from "@jawbot/shared";
 import { toSkillDescriptor } from "@jawbot/shared";
-import { chromiumAndroidSkill } from "./chromium-android.js";
-
-const builtinSkills: Skill[] = [chromiumAndroidSkill];
 
 export interface SkillMatch {
   skill: Skill;
@@ -10,13 +7,13 @@ export interface SkillMatch {
 }
 
 /**
- * Holds plain-text Skills (user-supplied playbooks) and resolves natural
- * language to a runnable skill task.
+ * Holds plain-text Skills (user-supplied playbooks, loaded from the skills
+ * folder at startup) and resolves natural language to a runnable skill task.
  */
 export class SkillRegistry {
   private readonly byId = new Map<string, Skill>();
 
-  constructor(list: Skill[] = builtinSkills) {
+  constructor(list: Skill[] = []) {
     for (const skill of list) {
       this.byId.set(skill.id, skill);
     }
