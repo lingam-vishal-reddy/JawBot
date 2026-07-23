@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 export interface OpenTerminalOptions {
   cwd?: string;
@@ -32,6 +32,24 @@ export interface OpenTerminalResult {
   pid: number;
   emulator: string;
   cwd: string;
+  display: string;
+}
+
+export interface RunVisibleOptions {
+  command: string;
+  cwd?: string;
+  env?: Record<string, string>;
+  title?: string;
+  timeoutMs?: number;
+  onStdout?: (chunk: string) => void;
+  pollMs?: number;
+  /** Keep the window open after success (default: only kept open on failure). */
+  keepOpenOnSuccess?: boolean;
+}
+
+export interface RunVisibleResult extends RunProcessResult {
+  pid: number;
+  emulator: string;
   display: string;
 }
 
@@ -164,6 +182,177 @@ export class LinuxRuntime {
       });
       child.on("close", (code, signal) => finish(code, signal));
     });
+  }
+
+  /**
+   * Headful command execution: run a command inside a VISIBLE terminal window
+   * so interactive prompts (e.g. `sudo`) have a real TTY the logged-in user can
+   * answer. Output is tee'd to a log file that we tail into onStdout, and the
+   * command's exit code is written to a sentinel file we wait on.
+   *
+   * This is why `sudo` "hangs" in headless mode: there is no TTY/stdin, so the
+   * password prompt has nowhere to go. Running visibly fixes that.
+   */
+  runVisible(options: RunVisibleOptions): Promise<RunVisibleResult> {
+    const cwd = resolveCwd(options.cwd);
+    const emulator = this.detectEmulator();
+    const title = options.title ?? "JawBot";
+    const timeoutMs = options.timeoutMs ?? 120_000;
+    const pollMs = options.pollMs ?? 500;
+
+    const dir = mkdtempSync(join(tmpdir(), "jawbot-visible-"));
+    const logFile = join(dir, "output.log");
+    const codeFile = join(dir, "exit.code");
+
+    const hold = options.keepOpenOnSuccess
+      ? `echo; echo "[JawBot] exit=$ec — press Enter to close"; read`
+      : `if [ "$ec" != "0" ]; then echo; echo "[JawBot] exit=$ec — press Enter to close"; read; fi`;
+
+    // Runs inside the visible terminal via `bash -lc`.
+    const innerScript = [
+      `cd ${shellQuote(cwd)}`,
+      `touch ${shellQuote(logFile)}`,
+      `set -o pipefail`,
+      `( ${options.command} ) 2>&1 | tee ${shellQuote(logFile)}`,
+      `ec=\${PIPESTATUS[0]}`,
+      `printf '%s' "$ec" > ${shellQuote(codeFile)}`,
+      hold,
+    ].join("; ");
+
+    const args = this.buildVisibleArgs(emulator, { cwd, title }, innerScript);
+
+    const child = spawn(emulator, args, {
+      cwd,
+      env: {
+        ...process.env,
+        ...options.env,
+        DISPLAY: this.display,
+      },
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+
+    const pid = child.pid ?? 0;
+
+    return new Promise<RunVisibleResult>((resolvePromise) => {
+      let stdout = "";
+      let offset = 0;
+      let spawnError = false;
+      const start = Date.now();
+
+      child.on("error", () => {
+        spawnError = true;
+      });
+
+      const tail = () => {
+        try {
+          if (existsSync(logFile)) {
+            const buf = readFileSync(logFile);
+            if (buf.length > offset) {
+              const chunk = buf.subarray(offset).toString("utf8");
+              offset = buf.length;
+              stdout += chunk;
+              options.onStdout?.(chunk);
+            }
+          }
+        } catch {
+          /* file may briefly not exist; ignore */
+        }
+      };
+
+      const finish = (
+        exitCode: number | null,
+        timedOut: boolean,
+      ): void => {
+        clearInterval(timer);
+        tail();
+        if (timedOut && pid) {
+          try {
+            process.kill(-pid, "SIGKILL");
+          } catch {
+            try {
+              process.kill(pid, "SIGKILL");
+            } catch {
+              /* already gone */
+            }
+          }
+        }
+        try {
+          rmSync(dir, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+        resolvePromise({
+          exitCode,
+          signal: null,
+          stdout,
+          stderr: "",
+          timedOut,
+          pid,
+          emulator,
+          display: this.display,
+        });
+      };
+
+      const timer = setInterval(() => {
+        tail();
+
+        if (existsSync(codeFile)) {
+          const raw = (() => {
+            try {
+              return readFileSync(codeFile, "utf8").trim();
+            } catch {
+              return "";
+            }
+          })();
+          if (raw.length) {
+            const code = Number.parseInt(raw, 10);
+            finish(Number.isNaN(code) ? null : code, false);
+            return;
+          }
+        }
+
+        if (spawnError) {
+          finish(null, false);
+          return;
+        }
+        if (Date.now() - start > timeoutMs) {
+          finish(null, true);
+        }
+      }, pollMs);
+    });
+  }
+
+  private buildVisibleArgs(
+    emulator: string,
+    opts: { cwd: string; title: string },
+    innerScript: string,
+  ): string[] {
+    if (
+      emulator.includes("xfce4-terminal") ||
+      emulator === "x-terminal-emulator"
+    ) {
+      return [
+        `--working-directory=${opts.cwd}`,
+        `--title=${opts.title}`,
+        "--window",
+        "-e",
+        `bash -lc ${shellQuote(innerScript)}`,
+      ];
+    }
+    if (emulator.includes("gnome-terminal")) {
+      return [
+        `--working-directory=${opts.cwd}`,
+        "--window",
+        "--",
+        "bash",
+        "-lc",
+        innerScript,
+      ];
+    }
+    // xterm-style
+    return ["-T", opts.title, "-e", `bash -lc ${shellQuote(innerScript)}`];
   }
 
   private buildTerminalArgs(

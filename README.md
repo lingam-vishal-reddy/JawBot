@@ -19,7 +19,7 @@ Jaws (chat UI) ──message──► Gateway ──► Orchestrator + LLM
 |--------|------|
 | Gateway | `POST /sessions`, `POST /sessions/:id/messages`, `WS /ws/chat` |
 | Orchestrator + LLM | Plan actions, optional reply |
-| Tools | Executable primitives: `open_shell`, `run_command` |
+| Tools | Executable primitives: `open_shell`, `run_command` (headful) |
 | Skills | Plain-text playbooks the user supplies (e.g. `chromium-android`) that drive tools |
 | Runtime | Visible terminal + process execution on Linux |
 
@@ -92,6 +92,15 @@ cwd: /some/dir                    # optional working directory
 
 Lines starting with `#` are comments (except inside `[context]`). Steps run
 sequentially; the run stops and reports on the first failing step.
+
+### Headful execution
+
+Everything runs **headful** — commands (both `run_command` and skill task
+steps) execute in a **visible terminal** on the Linux desktop (`DISPLAY`, e.g.
+via VNC), never headless. This gives interactive prompts such as `sudo` a real
+TTY, so a logged-in user can see the work and type a password when asked.
+Output is still streamed back to chat/telemetry; step windows stay open so you
+can watch progress, and a failing window stays open showing the error.
 
 ## Quick start
 

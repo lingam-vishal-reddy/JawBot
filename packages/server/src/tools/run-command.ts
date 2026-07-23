@@ -3,27 +3,11 @@ import type { Tool } from "./types.js";
 
 export const runCommandTool: Tool = {
   name: "run_command",
-  description: "Run a shell command on the Linux machine",
+  description: "Run a shell command on the Linux machine (visible terminal)",
   async run({ job, runtime, events }) {
     const input = job.input as unknown as RunCommandInput;
     if (!input.command?.trim()) {
       throw new Error("run_command requires input.command");
-    }
-
-    if (input.visible) {
-      const opened = runtime.openTerminal({
-        cwd: input.cwd,
-        title: `JawBot run — ${job.id.slice(0, 8)}`,
-        tab: true,
-        command: input.command,
-      });
-      events.emit(job.id, job.sessionId, "terminal.opened", {
-        pid: opened.pid,
-        emulator: opened.emulator,
-        cwd: opened.cwd,
-        display: opened.display,
-        command: input.command,
-      });
     }
 
     events.emit(job.id, job.sessionId, "skill.progress", {
@@ -32,23 +16,28 @@ export const runCommandTool: Tool = {
       cwd: input.cwd,
     });
 
-    const result = await runtime.runProcess({
+    // Headful by design: run in a visible terminal so the logged-in user can
+    // see it and answer interactive prompts (sudo, etc.). No headless path.
+    const result = await runtime.runVisible({
       command: input.command,
       cwd: input.cwd,
       env: input.env,
       timeoutMs: input.timeoutMs,
+      title: `JawBot run — ${job.id.slice(0, 8)}`,
       onStdout: (chunk) => {
         events.emit(job.id, job.sessionId, "log.chunk", {
           stream: "stdout",
           text: chunk,
         });
       },
-      onStderr: (chunk) => {
-        events.emit(job.id, job.sessionId, "log.chunk", {
-          stream: "stderr",
-          text: chunk,
-        });
-      },
+    });
+
+    events.emit(job.id, job.sessionId, "terminal.opened", {
+      pid: result.pid,
+      emulator: result.emulator,
+      cwd: input.cwd,
+      display: result.display,
+      command: input.command,
     });
 
     if (result.timedOut) {
@@ -74,7 +63,6 @@ export const runCommandTool: Tool = {
       result: {
         exitCode: result.exitCode,
         stdout: result.stdout,
-        stderr: result.stderr,
       },
       summary,
     };

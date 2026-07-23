@@ -90,18 +90,18 @@ export class SkillRunner {
         phase: "executing",
       });
 
-      const result = await this.runtime.runProcess({
+      // Headful: run each step in a visible terminal so interactive prompts
+      // (e.g. sudo during Chromium build-deps) have a real TTY the logged-in
+      // user can answer. Keep the window open so progress is watchable.
+      const result = await this.runtime.runVisible({
         command: step.command,
         cwd: step.cwd,
         timeoutMs: step.timeoutMs,
+        title: `${skill.name} · ${step.name}`,
+        keepOpenOnSuccess: true,
         onStdout: (chunk) =>
           this.jobEvents.emit(job.id, sessionId, "log.chunk", {
             stream: "stdout",
-            text: chunk,
-          }),
-        onStderr: (chunk) =>
-          this.jobEvents.emit(job.id, sessionId, "log.chunk", {
-            stream: "stderr",
             text: chunk,
           }),
       });
