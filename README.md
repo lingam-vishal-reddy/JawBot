@@ -118,11 +118,21 @@ The planner client is chosen at runtime via `JAWBOT_LLM`:
 | Beta (OpenAPI-like) | `JAWBOT_LLM=beta` + `BETA_OPENAPI_TOKEN` + `BETA_GENERATIVE_AI_CLIENT` |
 
 - OpenAI optional: `OPENAI_MODEL`, `OPENAI_BASE_URL`
-- Beta is an **independent** client (separate from the OpenAI one). It
-  authenticates with two headers — `x-openapi-token` and
+- Beta is an **independent** client with its own wire protocol (not
+  OpenAI-shaped). It authenticates with two headers — `x-openapi-token` and
   `x-generative-ai-client` — and its endpoint is `BETA_BASE_URL` + `BETA_PATH`
   (both configurable). Optional: `BETA_MODEL`, `BETA_BASE_URL`,
-  `BETA_PATH` (default `/chat/completions`).
+  `BETA_PATH` (default `/generate`).
+
+  Request/response schema:
+
+  ```text
+  Request  { modelIds: string[], contents: string[], systemPrompt: string, isStream: boolean }
+  Response { content: string }
+  ```
+
+  `modelIds` carries the single configurable `BETA_MODEL`, `contents` is the
+  conversation as plain strings, and `content` is the returned text.
 
 Also: `JAWBOT_PORT`, `DISPLAY`
 

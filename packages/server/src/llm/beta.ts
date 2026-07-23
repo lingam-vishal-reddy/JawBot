@@ -2,32 +2,39 @@ import type { PlannedAction } from "@jawbot/shared";
 import { isToolName } from "@jawbot/shared";
 import type { LlmClient, PlanRequest, PlanResult, ReplyRequest } from "./types.js";
 
-interface ChatCompletionResponse {
-  choices?: Array<{ message?: { content?: string } }>;
+/**
+ * Beta response envelope: a single string `content`.
+ */
+interface BetaResponse {
+  content?: string;
 }
 
 /**
- * Independent "beta" OpenAPI-like planner. Separate from OpenAiLlm on purpose.
+ * Independent "beta" planner. Its wire protocol is deliberately different from
+ * the OpenAI client — no `messages`/`choices`. Instead:
  *
- * Auth is via two headers instead of a bearer token:
+ *   Request  { modelIds: string[], contents: string[], systemPrompt: string, isStream: boolean }
+ *   Response { content: string }
+ *
+ * Auth is via two headers:
  *   - x-openapi-token
  *   - x-generative-ai-client
  *
  * Both the base URL and the request path are configurable, so the endpoint is
- * `${baseUrl}${path}` (e.g. https://beta.example.com + /v1/generate).
+ * `${baseUrl}${path}`.
  *
  * Enable with:
  *   JAWBOT_LLM=beta \
  *   BETA_OPENAPI_TOKEN=... \
  *   BETA_GENERATIVE_AI_CLIENT=... \
- *   [BETA_BASE_URL=...] [BETA_PATH=/chat/completions] [BETA_MODEL=...]
+ *   [BETA_BASE_URL=...] [BETA_PATH=/generate] [BETA_MODEL=...]
  */
 export class BetaLlm implements LlmClient {
   private readonly openApiToken: string;
   private readonly generativeAiClient: string;
   private readonly baseUrl: string;
   private readonly path: string;
-  private readonly model: string;
+  private readonly modelId: string;
 
   constructor(opts?: {
     openApiToken?: string;
@@ -46,9 +53,9 @@ export class BetaLlm implements LlmClient {
       "https://api.beta.local/v1"
     ).replace(/\/$/, "");
     this.path = normalizePath(
-      opts?.path ?? process.env.BETA_PATH ?? "/chat/completions",
+      opts?.path ?? process.env.BETA_PATH ?? "/generate",
     );
-    this.model = opts?.model ?? process.env.BETA_MODEL ?? "beta";
+    this.modelId = opts?.model ?? process.env.BETA_MODEL ?? "beta";
 
     if (!this.openApiToken) {
       throw new Error("BETA_OPENAPI_TOKEN is required for BetaLlm");
@@ -73,7 +80,7 @@ export class BetaLlm implements LlmClient {
         `if the user asks to run one, translate its steps into run_command actions:\n${req.skillsContext}`
       : "";
 
-    const system = `You are JawBot's planner for a Linux workstation agent.
+    const systemPrompt = `You are JawBot's planner for a Linux workstation agent.
 You receive a user chat message. Decide:
 1) which tools (if any) to invoke
 2) whether the user needs a chat reply
@@ -97,49 +104,41 @@ Return ONLY JSON:
 Available tools:
 ${toolList}${skillsBlock}`;
 
-    const history = req.history.slice(-12).map((m) => ({
-      role: m.role === "assistant" ? "assistant" : "user",
-      content: m.content,
-    }));
+    // contents: the conversation so far as plain strings, then the new message.
+    const contents = [
+      ...req.history.slice(-12).map((m) => `${m.role}: ${m.content}`),
+      req.userMessage,
+    ];
 
-    const content = await this.complete(
-      [
-        { role: "system", content: system },
-        ...history,
-        { role: "user", content: req.userMessage },
-      ],
-      { json: true },
-    );
-
+    const content = await this.generate(systemPrompt, contents);
     return parsePlan(content || "{}");
   }
 
   async phraseReply(req: ReplyRequest): Promise<string | null> {
     if (req.draftReply?.trim() && !req.failed) return req.draftReply.trim();
 
-    const system = `You are JawBot. Write one short chat reply for the user.
+    const systemPrompt = `You are JawBot. Write one short chat reply for the user.
 No markdown dump of logs unless they asked for output.
 If a command produced useful stdout, summarize or quote briefly.
 If failed, say so plainly. Return plain text only.`;
 
-    const user = JSON.stringify({
-      userMessage: req.userMessage,
-      actionSummaries: req.actionSummaries,
-      failed: req.failed ?? false,
-      draftReply: req.draftReply ?? null,
-    });
+    const contents = [
+      JSON.stringify({
+        userMessage: req.userMessage,
+        actionSummaries: req.actionSummaries,
+        failed: req.failed ?? false,
+        draftReply: req.draftReply ?? null,
+      }),
+    ];
 
-    const content = await this.complete([
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ]);
+    const content = await this.generate(systemPrompt, contents);
     const trimmed = content.trim();
     return trimmed.length ? trimmed : null;
   }
 
-  private async complete(
-    messages: Array<{ role: string; content: string }>,
-    opts?: { json?: boolean },
+  private async generate(
+    systemPrompt: string,
+    contents: string[],
   ): Promise<string> {
     const res = await fetch(this.endpoint(), {
       method: "POST",
@@ -149,10 +148,10 @@ If failed, say so plainly. Return plain text only.`;
         "x-generative-ai-client": this.generativeAiClient,
       },
       body: JSON.stringify({
-        model: this.model,
-        temperature: 0.2,
-        messages,
-        ...(opts?.json ? { response_format: { type: "json_object" } } : {}),
+        modelIds: [this.modelId],
+        contents,
+        systemPrompt,
+        isStream: false,
       }),
     });
 
@@ -161,8 +160,8 @@ If failed, say so plainly. Return plain text only.`;
       throw new Error(`Beta LLM error ${res.status}: ${body}`);
     }
 
-    const data = (await res.json()) as ChatCompletionResponse;
-    return data.choices?.[0]?.message?.content ?? "";
+    const data = (await res.json()) as BetaResponse;
+    return data.content ?? "";
   }
 }
 
