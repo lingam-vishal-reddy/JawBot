@@ -1,3 +1,4 @@
+import "./env.js";
 import { createServer } from "node:http";
 import { EventBus } from "./events/bus.js";
 import { ChatBus } from "./chat/bus.js";

@@ -136,6 +136,14 @@ The planner client is chosen at runtime via `JAWBOT_LLM`:
 
 Also: `JAWBOT_PORT`, `DISPLAY`
 
+#### Config / `.env`
+
+On startup JawBot loads a `.env` file (see `.env.example`). It searches
+`JAWBOT_ENV_FILE`, the current directory, and the repo root — so it works from
+either the repo root or the `packages/server` workspace, in dev (`tsx`) or prod
+(`node dist`). Real environment variables always take precedence; `.env` only
+fills in what's missing.
+
 ### Frontend
 
 Use **Jaws** against this host:
