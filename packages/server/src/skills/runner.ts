@@ -12,8 +12,8 @@ import {
 import type { ChatBus } from "../chat/bus.js";
 import type { EventBus } from "../events/bus.js";
 import type { JobStore } from "../jobs/store.js";
-import type { LlmClient } from "../llm/types.js";
-import type { LinuxRuntime, RunVisibleResult } from "../runtime/linux.js";
+import type { LlmClient, PreviousStepResult } from "../llm/types.js";
+import type { LinuxRuntime, VisibleStepResult } from "../runtime/linux.js";
 import type { SessionStore } from "../sessions/store.js";
 import type { SkillRunStore } from "./runs.js";
 
@@ -84,72 +84,81 @@ export class SkillRunner {
       startedAt: new Date().toISOString(),
     });
 
-    // Context handed to the LLM to resolve each command. No substitution here.
     const context = { ...skill.params, ...task.params };
 
-    for (const step of task.steps) {
-      const current = this.runs.get(runId);
-      const stepRef = current?.steps.find((s) => s.name === step.name);
-      const index = stepRef?.index ?? 0;
+    // ONE persistent interactive terminal. We resolve and run steps one at a
+    // time so the LLM can decide each command from the PREVIOUS results, and
+    // state (cd, env, files) carries across steps in the same shell.
+    const session = this.runtime.openControlledSession({
+      title: `${skill.name} · ${task.name}`,
+    });
+    const previousSteps: PreviousStepResult[] = [];
 
-      // Let the LLM produce the actual command from the general template +
-      // context (branch, output dir, …) + the user's message. If no LLM
-      // supports this (heuristic planner), run the template verbatim.
-      const command = await this.resolveCommand(skill, task, step, context, triggerMessage);
+    try {
+      for (let i = 0; i < task.steps.length; i++) {
+        const step = task.steps[i]!;
 
-      const job = this.createJob(sessionId, command, runId);
-      this.runs.updateStep(runId, index, {
-        status: "running",
-        command,
-        jobId: job.id,
-        startedAt: new Date().toISOString(),
-      });
-      this.jobEvents.emit(job.id, sessionId, "skill.progress", {
-        skillRunId: runId,
-        step: step.name,
-        phase: "executing",
-        command,
-      });
+        // Decide this command from the template + context + prior results.
+        const command = await this.resolveCommand(
+          skill,
+          task,
+          step,
+          context,
+          triggerMessage,
+          previousSteps,
+        );
 
-      // Headful: run each step in a visible terminal so interactive prompts
-      // (e.g. sudo during Chromium build-deps) have a real TTY the logged-in
-      // user can answer. Keep the window open so progress is watchable.
-      const result = await this.runtime.runVisible({
-        command,
-        cwd: step.cwd,
-        timeoutMs: step.timeoutMs,
-        title: `${skill.name} · ${step.name}`,
-        keepOpenOnSuccess: true,
-        onStdout: (chunk) =>
-          this.jobEvents.emit(job.id, sessionId, "log.chunk", {
-            stream: "stdout",
-            text: chunk,
-          }),
-      });
-
-      const ok = !result.timedOut && (result.exitCode ?? 1) === 0;
-      const finishedAt = new Date().toISOString();
-
-      if (ok) {
-        this.jobs.update(job.id, {
-          status: "succeeded",
-          finishedAt,
-          result: { exitCode: result.exitCode },
+        const job = this.createJob(sessionId, command, runId);
+        this.runs.updateStep(runId, i, {
+          status: "running",
+          command,
+          jobId: job.id,
+          startedAt: new Date().toISOString(),
         });
-        this.jobEvents.emit(job.id, sessionId, "job.completed", {
+        this.jobEvents.emit(job.id, sessionId, "skill.progress", {
+          skillRunId: runId,
+          step: step.name,
+          phase: "executing",
+          command,
+        });
+
+        const result = await session.run(command, {
+          timeoutMs: step.timeoutMs,
+          onOutput: (chunk) =>
+            this.jobEvents.emit(job.id, sessionId, "log.chunk", {
+              stream: "stdout",
+              text: chunk,
+            }),
+        });
+
+        const finishedAt = new Date().toISOString();
+        const ok = !result.timedOut && (result.exitCode ?? 1) === 0;
+
+        previousSteps.push({
+          name: step.name,
+          command,
           exitCode: result.exitCode,
+          output: result.output,
         });
-        this.runs.updateStep(runId, index, { status: "succeeded", finishedAt });
-      } else {
-        // Concise, human-readable error (LLM-summarized) — not just the exit code.
+
+        if (ok) {
+          this.jobs.update(job.id, {
+            status: "succeeded",
+            finishedAt,
+            result: { exitCode: result.exitCode },
+          });
+          this.jobEvents.emit(job.id, sessionId, "job.completed", {
+            exitCode: result.exitCode,
+          });
+          this.runs.updateStep(runId, i, { status: "succeeded", finishedAt });
+          continue;
+        }
+
+        // Failure → concise LLM error, stop the task (terminal stays for user).
         const error = await this.describeFailure(skill, task, step, command, result);
         this.jobs.update(job.id, { status: "failed", finishedAt, error });
         this.jobEvents.emit(job.id, sessionId, "job.failed", { error });
-        this.runs.updateStep(runId, index, {
-          status: "failed",
-          finishedAt,
-          error,
-        });
+        this.runs.updateStep(runId, i, { status: "failed", finishedAt, error });
         this.runs.update(runId, {
           status: "failed",
           finishedAt,
@@ -157,24 +166,27 @@ export class SkillRunner {
         });
         this.postChat(
           sessionId,
-          `${skill.name} · ${task.name} failed at step ${index + 1}/${
+          `${skill.name} · ${task.name} failed at step ${i + 1}/${
             task.steps.length
           } (${step.name}): ${error}`,
         );
         return;
       }
-    }
 
-    this.runs.update(runId, {
-      status: "succeeded",
-      finishedAt: new Date().toISOString(),
-    });
-    this.postChat(
-      sessionId,
-      `Finished ${skill.name} · ${task.name} — all ${task.steps.length} step${
-        task.steps.length === 1 ? "" : "s"
-      } succeeded.`,
-    );
+      this.runs.update(runId, {
+        status: "succeeded",
+        finishedAt: new Date().toISOString(),
+      });
+      this.postChat(
+        sessionId,
+        `Finished ${skill.name} · ${task.name} — all ${task.steps.length} step${
+          task.steps.length === 1 ? "" : "s"
+        } succeeded. The terminal is still open for you to continue.`,
+      );
+    } finally {
+      // Hand the terminal to the user (drops into an interactive shell).
+      session.finish();
+    }
   }
 
   private async resolveCommand(
@@ -183,6 +195,7 @@ export class SkillRunner {
     step: SkillTaskStep,
     context: Record<string, string>,
     triggerMessage: string,
+    previousSteps: PreviousStepResult[],
   ): Promise<string> {
     // Heuristic planner (no LLM): substitute {{param}} with defaults.
     if (!this.llm.resolveCommand) return applyTemplate(step.template, context);
@@ -196,6 +209,7 @@ export class SkillRunner {
           template: step.template,
           context,
           userMessage: triggerMessage,
+          previousSteps,
         })
       ).trim();
       // Fall back to default substitution if the LLM returns nothing.
@@ -211,13 +225,13 @@ export class SkillRunner {
     task: SkillTask,
     step: SkillTaskStep,
     command: string,
-    result: RunVisibleResult,
+    result: VisibleStepResult,
   ): Promise<string> {
     if (result.timedOut) {
       const secs = Math.round((step.timeoutMs ?? 120_000) / 1000);
       return `timed out after ${secs}s`;
     }
-    const output = result.stdout ?? "";
+    const output = result.output ?? "";
     if (this.llm.summarizeError) {
       try {
         const summary = (

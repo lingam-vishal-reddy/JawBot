@@ -110,6 +110,14 @@ params as `{{param}}` placeholders (e.g. `gn gen {{output_dir}}`).
   `{{param}}` placeholders are replaced with their **default** values, so write
   defaults that make the template runnable as-is.
 
+Steps are **not** pre-chained. A task runs as an **adaptive loop**: each step's
+command is resolved **after** the previous step finishes, and the previous
+steps' commands + exit codes + output are passed to the LLM so it can adapt the
+next command to what actually happened. The whole task runs in one persistent
+terminal, so `cd`, environment, and generated files carry across steps (e.g.
+`gn gen` then `autoninja` find `build.ninja`). When the task ends the terminal
+drops into an interactive shell so you can keep working from the final state.
+
 ### Headful execution
 
 Everything runs **headful** — commands (both `run_command` and skill task
@@ -122,7 +130,10 @@ can watch progress, and a failing window stays open showing the error.
 Details:
 - Commands run in an **interactive** shell (`bash -ic`), so your `~/.bashrc`
   is loaded just like a normal terminal.
-- Each command opens **one** terminal window (no stray extra window).
+- One terminal window per task/command (no stray extra window). Each command is
+  echoed (you see the command, not just its output).
+- A skill task uses **one persistent terminal**, driven command-by-command, so
+  shell state carries across steps and you can keep typing in it afterwards.
 - On failure the user-facing message is a **concise, LLM-summarized error**
   (not just an exit code); without an LLM it falls back to the last meaningful
   output line.

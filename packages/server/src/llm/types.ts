@@ -41,6 +41,14 @@ export interface ReplyRequest {
  * for one skill-task step, using the declared context (params) and the user's
  * message. No rule-based substitution happens anywhere — the LLM decides.
  */
+export interface PreviousStepResult {
+  name: string;
+  command: string;
+  exitCode: number | null;
+  /** Tail of the command's output. */
+  output: string;
+}
+
 export interface ResolveCommandRequest {
   skillName: string;
   /** The skill's plain-text playbook, for extra context. */
@@ -53,6 +61,11 @@ export interface ResolveCommandRequest {
   context: Record<string, string>;
   /** The user's triggering message (may contain overrides in prose). */
   userMessage: string;
+  /**
+   * Results of the earlier steps in this task (in order), so the LLM can adapt
+   * the next command to what actually happened.
+   */
+  previousSteps: PreviousStepResult[];
 }
 
 /**

@@ -146,7 +146,8 @@ If failed, say so plainly. Return plain text only.`;
 
   async resolveCommand(req: ResolveCommandRequest): Promise<string> {
     const systemPrompt = `You turn a general step template into ONE concrete shell command for a Linux machine.
-Use the provided context values (e.g. branch, output directory) and the user's message to fill in specifics.
+Use the provided context values (e.g. branch, output directory), the user's message, and the results of previous steps to decide the exact command.
+Adapt to what actually happened in previous steps (paths chosen, failures, files created); stay consistent with them.
 Prefer the context/user values over anything hardcoded in the template.
 Output ONLY the command — no prose, no markdown, no backticks. Multiple statements may be joined with ';' or '&&'.`;
 
@@ -159,6 +160,12 @@ Output ONLY the command — no prose, no markdown, no backticks. Multiple statem
         context: req.context,
         userMessage: req.userMessage,
         playbook: req.skillContext,
+        previousSteps: req.previousSteps.map((s) => ({
+          name: s.name,
+          command: s.command,
+          exitCode: s.exitCode,
+          output: tailText(s.output, 1500),
+        })),
       }),
     ];
 
