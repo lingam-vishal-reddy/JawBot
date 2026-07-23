@@ -30,16 +30,17 @@ import type { Skill, SkillTask, SkillTaskStep } from "@jawbot/shared";
  * Rules:
  * - `key: value` header lines set the skill (before any section) or the task.
  * - `triggers` is a comma-separated list.
- * - `param: name = default` declares a context value. Skill-level params apply
- *   to every task; task-level params override them. Params are handed to the
- *   LLM as context — they are NOT substituted into templates by any rule.
+ * - `param: name = default` declares a context value referenced in templates as
+ *   `{{name}}`. Skill-level params apply to every task; task-level params
+ *   override them.
  * - `[context]` captures raw multi-line text until the next section.
  * - `[task <id>]` opens a task; its header lines must come before the first
  *   `step:`.
  * - `step:` opens a step (its value is the step name); the following
- *   `template:` (or `command:`) is a GENERAL template. When an LLM planner is
- *   configured it resolves the actual command from the template + params + the
- *   user's message; the heuristic planner runs the template verbatim.
+ *   `template:` (or `command:`) is a GENERAL template that references params as
+ *   `{{param}}`. With an LLM planner the LLM resolves the actual command from
+ *   the template + params + the user's message; the heuristic planner replaces
+ *   `{{param}}` with the declared default values.
  * - `cwd:` / `timeout:` / `timeoutMs:` configure the current step.
  * - Lines starting with `#` are comments (except inside a [context] block).
  */

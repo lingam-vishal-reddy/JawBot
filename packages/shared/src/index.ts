@@ -114,11 +114,14 @@ export function isToolName(value: unknown): value is ToolName {
 /* -------------------------------------------------------------------------- */
 
 /**
- * One step in a skill task. `template` is a GENERAL template — it is NOT run
- * verbatim when an LLM planner is configured. The LLM resolves the actual shell
- * command from this template plus the task/skill `params` (branch, output dir,
- * …) and the user's message. With the heuristic planner (no LLM) the template
- * runs as-is. There is deliberately no rule-based placeholder substitution.
+ * One step in a skill task. `template` is a GENERAL template that references
+ * params via `{{param}}` placeholders (e.g. `gn gen {{output_dir}}`).
+ *
+ * - With an LLM planner (openai/beta): the LLM resolves the actual command from
+ *   this template + the task/skill `params` + the user's message (it decides;
+ *   we don't substitute).
+ * - With the heuristic planner (no LLM), or if LLM resolution fails: the
+ *   `{{param}}` placeholders are replaced with their default values.
  */
 export interface SkillTaskStep {
   name: string;
@@ -197,6 +200,21 @@ export interface SkillRun {
   startedAt?: string;
   finishedAt?: string;
   error?: string;
+}
+
+/**
+ * Replace `{{param}}` placeholders in a template with values from `context`.
+ * Used only for the heuristic planner and as the LLM-failure fallback — the
+ * LLM path does its own resolution. Unknown placeholders are left intact.
+ */
+export function applyTemplate(
+  template: string,
+  context: Record<string, string>,
+): string {
+  return template.replace(
+    /\{\{\s*([\w.-]+)\s*\}\}/g,
+    (whole, key: string) => (key in context ? context[key]! : whole),
+  );
 }
 
 export function toSkillDescriptor(skill: Skill): SkillDescriptor {

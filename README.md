@@ -85,11 +85,11 @@ triggers: build, compile
 param: apk_target = my_apk         # task params override skill params
 
 step: Configure
-template: gn gen out/Default --args='target_os="android"'
+template: gn gen {{output_dir}} --args='target_os="android"'
 timeout: 600                       # seconds (or timeoutMs: for milliseconds)
 
 step: Compile
-template: autoninja -C out/Default my_apk
+template: autoninja -C {{output_dir}} {{apk_target}}
 cwd: /some/dir                     # optional working directory
 ```
 
@@ -98,14 +98,17 @@ sequentially; the run stops and reports on the first failing step.
 
 #### Templates, params, and command resolution
 
-Step `template:` (alias `command:`) is a **general template**, not necessarily
-the literal command. When an LLM planner (`openai` / `beta`) is configured, the
-LLM produces the **actual** command for each step from the template + the
-declared `param` context (branch, output directory, …) + your triggering
-message — so "build chromium on branch main into out/Release" can change the
-output dir and branch. There is **no rule-based placeholder substitution**; the
-LLM decides. With the heuristic planner (no LLM) the template runs verbatim, so
-write templates that are runnable as-is with the default params.
+Step `template:` (alias `command:`) is a **general template** that references
+params as `{{param}}` placeholders (e.g. `gn gen {{output_dir}}`).
+
+- With an LLM planner (`openai` / `beta`): the LLM produces the **actual**
+  command for each step from the template + the declared `param` context
+  (branch, output directory, …) + your triggering message — so "build chromium
+  on branch main into out/Release" can change the output dir and branch. The
+  LLM decides; nothing is substituted by rule.
+- With the heuristic planner (no LLM), or if LLM resolution fails: the
+  `{{param}}` placeholders are replaced with their **default** values, so write
+  defaults that make the template runnable as-is.
 
 ### Headful execution
 

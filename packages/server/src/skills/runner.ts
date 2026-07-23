@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type {
-  ChatMessage,
-  Job,
-  Skill,
-  SkillRun,
-  SkillRunStep,
-  SkillTask,
-  SkillTaskStep,
+import {
+  applyTemplate,
+  type ChatMessage,
+  type Job,
+  type Skill,
+  type SkillRun,
+  type SkillRunStep,
+  type SkillTask,
+  type SkillTaskStep,
 } from "@jawbot/shared";
 import type { ChatBus } from "../chat/bus.js";
 import type { EventBus } from "../events/bus.js";
@@ -184,7 +185,8 @@ export class SkillRunner {
     context: Record<string, string>,
     triggerMessage: string,
   ): Promise<string> {
-    if (!this.llm.resolveCommand) return step.template;
+    // Heuristic planner (no LLM): substitute {{param}} with defaults.
+    if (!this.llm.resolveCommand) return applyTemplate(step.template, context);
     try {
       const resolved = (
         await this.llm.resolveCommand({
@@ -197,10 +199,11 @@ export class SkillRunner {
           userMessage: triggerMessage,
         })
       ).trim();
-      return resolved || step.template;
+      // Fall back to default substitution if the LLM returns nothing.
+      return resolved || applyTemplate(step.template, context);
     } catch {
-      // Never block the run on resolution — fall back to the template as-is.
-      return step.template;
+      // Never block the run on resolution — substitute defaults.
+      return applyTemplate(step.template, context);
     }
   }
 

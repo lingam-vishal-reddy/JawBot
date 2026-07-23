@@ -1,10 +1,11 @@
 # JawBot skill (plain-text). Drop .txt files in this folder; they load at startup.
 # See README "Skill file format" for the full spec.
 #
-# Step `template:` lines are GENERAL templates. When an LLM planner is
-# configured it produces the actual command from the template + the params
-# below + your message (e.g. "build chromium on branch main into out/Release").
-# The heuristic planner (no LLM) runs the template verbatim.
+# Step `template:` lines are GENERAL templates that reference the params below
+# as {{placeholders}}. When an LLM planner is configured it produces the actual
+# command from the template + params + your message (e.g. "build chromium on
+# branch main into out/Release"). The heuristic planner (no LLM) replaces the
+# {{placeholders}} with their default values.
 
 id: chromium-android
 name: Chromium Android
@@ -30,9 +31,9 @@ Assumptions / environment:
 - Chromium source lives at ${CHROMIUM_SRC:-$HOME/chromium/src}.
 - Override with CHROMIUM_ROOT, CHROMIUM_SRC, DEPOT_TOOLS env vars.
 
-Use the params for specifics: check out {branch}, generate GN files into
-{output_dir} with target_os={target_os} and is_debug={is_debug}, and build
-{apk_target}. The user's message may override any of these.
+Use the params for specifics: check out {{branch}}, generate GN files into
+{{output_dir}} with target_os={{target_os}} and is_debug={{is_debug}}, and build
+{{apk_target}}. The user's message may override any of these.
 
 Status: setup and build run step by step; ask "status" for progress.
 
@@ -54,7 +55,7 @@ template: export PATH="${DEPOT_TOOLS:-$HOME/depot_tools}:$PATH"; cd "${CHROMIUM_
 timeoutMs: 1800000
 
 step: Checkout branch and sync
-template: export PATH="${DEPOT_TOOLS:-$HOME/depot_tools}:$PATH"; cd "${CHROMIUM_SRC:-$HOME/chromium/src}"; git checkout main 2>/dev/null || true; gclient sync
+template: export PATH="${DEPOT_TOOLS:-$HOME/depot_tools}:$PATH"; cd "${CHROMIUM_SRC:-$HOME/chromium/src}"; git checkout {{branch}} 2>/dev/null || true; gclient sync
 timeoutMs: 3600000
 
 [task build]
@@ -63,9 +64,9 @@ description: Configure GN args for Android and build the APK target.
 triggers: build, compile, make, apk
 
 step: gn gen (Android)
-template: export PATH="${DEPOT_TOOLS:-$HOME/depot_tools}:$PATH"; cd "${CHROMIUM_SRC:-$HOME/chromium/src}"; gn gen out/Android --args='target_os="android" is_debug=false'
+template: export PATH="${DEPOT_TOOLS:-$HOME/depot_tools}:$PATH"; cd "${CHROMIUM_SRC:-$HOME/chromium/src}"; gn gen {{output_dir}} --args='target_os="{{target_os}}" is_debug={{is_debug}}'
 timeoutMs: 600000
 
 step: autoninja build APK
-template: export PATH="${DEPOT_TOOLS:-$HOME/depot_tools}:$PATH"; cd "${CHROMIUM_SRC:-$HOME/chromium/src}"; autoninja -C out/Android chrome_public_apk
+template: export PATH="${DEPOT_TOOLS:-$HOME/depot_tools}:$PATH"; cd "${CHROMIUM_SRC:-$HOME/chromium/src}"; autoninja -C {{output_dir}} {{apk_target}}
 timeoutMs: 14400000
