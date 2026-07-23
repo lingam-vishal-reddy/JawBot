@@ -93,7 +93,12 @@ export class Orchestrator {
     // 2) Explicit skill task trigger (e.g. "set up chromium", "build chromium").
     const match = this.skills.match(trimmed);
     if (match) {
-      const run = this.skillRunner.start(sessionId, match.skill, match.task);
+      const run = this.skillRunner.start(
+        sessionId,
+        match.skill,
+        match.task,
+        trimmed,
+      );
       const assistantMessage = this.publishMessage({
         id: randomUUID(),
         sessionId,

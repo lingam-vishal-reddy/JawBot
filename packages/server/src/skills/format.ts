@@ -10,31 +10,37 @@ import type { Skill, SkillTask, SkillTaskStep } from "@jawbot/shared";
  *   name: Chromium Android
  *   description: one-line summary
  *   triggers: chromium, chrome android
+ *   param: output_dir = out/Android
+ *   param: branch = main
  *
  *   [context]
  *   Free-form plain-text playbook. Everything until the next [section]
  *   header is kept verbatim and handed to the planner.
  *
- *   [task setup]
- *   name: Chromium Android setup
+ *   [task build]
+ *   name: Chromium Android build
  *   description: what this task does
- *   triggers: setup, set up, install
+ *   triggers: build, compile
+ *   param: apk_target = chrome_public_apk
  *
- *   step: Clone depot_tools
- *   command: git clone https://... "$HOME/depot_tools"
+ *   step: Configure
+ *   template: gn gen out/Android --args='target_os="android"'
  *   timeout: 600            # seconds (or use `timeoutMs:` for milliseconds)
- *
- *   step: Fetch Chromium
- *   command: fetch --nohooks android
  *
  * Rules:
  * - `key: value` header lines set the skill (before any section) or the task.
  * - `triggers` is a comma-separated list.
+ * - `param: name = default` declares a context value. Skill-level params apply
+ *   to every task; task-level params override them. Params are handed to the
+ *   LLM as context — they are NOT substituted into templates by any rule.
  * - `[context]` captures raw multi-line text until the next section.
- * - `[task <id>]` opens a task; its `name`/`description`/`triggers` lines must
- *   come before the first `step:`.
+ * - `[task <id>]` opens a task; its header lines must come before the first
+ *   `step:`.
  * - `step:` opens a step (its value is the step name); the following
- *   `command:`, `cwd:`, `timeout:`/`timeoutMs:` lines configure that step.
+ *   `template:` (or `command:`) is a GENERAL template. When an LLM planner is
+ *   configured it resolves the actual command from the template + params + the
+ *   user's message; the heuristic planner runs the template verbatim.
+ * - `cwd:` / `timeout:` / `timeoutMs:` configure the current step.
  * - Lines starting with `#` are comments (except inside a [context] block).
  */
 
@@ -53,6 +59,7 @@ export function parseSkill(text: string, fallbackId?: string): ParsedSkillResult
   let name = "";
   let description = "";
   let triggers: string[] = [];
+  const skillParams: Record<string, string> = {};
   const contextLines: string[] = [];
   const tasks: SkillTask[] = [];
 
@@ -90,6 +97,7 @@ export function parseSkill(text: string, fallbackId?: string): ParsedSkillResult
           name: taskMatch[1]!.trim(),
           description: "",
           triggers: [],
+          params: {},
           steps: [],
         };
         continue;
@@ -128,6 +136,12 @@ export function parseSkill(text: string, fallbackId?: string): ParsedSkillResult
         case "triggers":
           triggers = splitList(value);
           break;
+        case "param": {
+          const p = parseParam(value);
+          if (p) skillParams[p.name] = p.value;
+          else errors.push(`invalid param at line ${i + 1}: "${value}"`);
+          break;
+        }
         default:
           errors.push(`unknown skill field "${key}" at line ${i + 1}`);
       }
@@ -137,14 +151,15 @@ export function parseSkill(text: string, fallbackId?: string): ParsedSkillResult
     // mode === "task"
     if (!currentTask) continue;
     if (key === "step") {
-      currentStep = { name: value, command: "" };
+      currentStep = { name: value, template: "" };
       currentTask.steps.push(currentStep);
       continue;
     }
     if (currentStep) {
       switch (key) {
+        case "template":
         case "command":
-          currentStep.command = value;
+          currentStep.template = value;
           break;
         case "cwd":
           currentStep.cwd = value;
@@ -175,6 +190,12 @@ export function parseSkill(text: string, fallbackId?: string): ParsedSkillResult
       case "triggers":
         currentTask.triggers = splitList(value);
         break;
+      case "param": {
+        const p = parseParam(value);
+        if (p) currentTask.params[p.name] = p.value;
+        else errors.push(`invalid param at line ${i + 1}: "${value}"`);
+        break;
+      }
       default:
         errors.push(`unknown task field "${key}" at line ${i + 1}`);
     }
@@ -189,9 +210,9 @@ export function parseSkill(text: string, fallbackId?: string): ParsedSkillResult
     errors.push("missing required field: id");
   }
   for (const task of tasks) {
-    const bad = task.steps.filter((s) => !s.command.trim());
+    const bad = task.steps.filter((s) => !s.template.trim());
     for (const s of bad) {
-      errors.push(`task "${task.id}" step "${s.name}" has no command`);
+      errors.push(`task "${task.id}" step "${s.name}" has no template/command`);
     }
   }
 
@@ -205,9 +226,29 @@ export function parseSkill(text: string, fallbackId?: string): ParsedSkillResult
     description,
     triggers,
     context: contextLines.join("\n").trim(),
+    params: skillParams,
     tasks,
   };
   return { skill, errors };
+}
+
+function parseParam(value: string): { name: string; value: string } | null {
+  const eq = value.indexOf("=");
+  const name = (eq === -1 ? value : value.slice(0, eq)).trim();
+  if (!/^[A-Za-z_][\w.-]*$/.test(name)) return null;
+  const def = eq === -1 ? "" : value.slice(eq + 1).trim();
+  return { name, value: unquote(def) };
+}
+
+function unquote(value: string): string {
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
 }
 
 function splitList(value: string): string[] {

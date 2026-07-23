@@ -27,6 +27,7 @@ const tools = new ToolRegistry();
 const loaded = loadSkillsFromDir();
 const skills = new SkillRegistry(loaded.skills);
 const skillRuns = new SkillRunStore();
+const llm = createLlmClient();
 const skillRunner = new SkillRunner(
   runtime,
   skillRuns,
@@ -34,8 +35,8 @@ const skillRunner = new SkillRunner(
   jobEvents,
   chat,
   sessions,
+  llm,
 );
-const llm = createLlmClient();
 const orchestrator = new Orchestrator(
   sessions,
   jobs,

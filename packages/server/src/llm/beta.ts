@@ -1,6 +1,13 @@
 import type { PlannedAction } from "@jawbot/shared";
 import { isToolName } from "@jawbot/shared";
-import type { LlmClient, PlanRequest, PlanResult, ReplyRequest } from "./types.js";
+import type {
+  LlmClient,
+  PlanRequest,
+  PlanResult,
+  ReplyRequest,
+  ResolveCommandRequest,
+} from "./types.js";
+import { cleanCommand } from "./openai.js";
 
 /**
  * Beta response envelope: a single string `content`.
@@ -134,6 +141,28 @@ If failed, say so plainly. Return plain text only.`;
     const content = await this.generate(systemPrompt, contents);
     const trimmed = content.trim();
     return trimmed.length ? trimmed : null;
+  }
+
+  async resolveCommand(req: ResolveCommandRequest): Promise<string> {
+    const systemPrompt = `You turn a general step template into ONE concrete shell command for a Linux machine.
+Use the provided context values (e.g. branch, output directory) and the user's message to fill in specifics.
+Prefer the context/user values over anything hardcoded in the template.
+Output ONLY the command — no prose, no markdown, no backticks. Multiple statements may be joined with ';' or '&&'.`;
+
+    const contents = [
+      JSON.stringify({
+        skill: req.skillName,
+        task: req.taskName,
+        step: req.stepName,
+        template: req.template,
+        context: req.context,
+        userMessage: req.userMessage,
+        playbook: req.skillContext,
+      }),
+    ];
+
+    const content = await this.generate(systemPrompt, contents);
+    return cleanCommand(content);
   }
 
   private async generate(

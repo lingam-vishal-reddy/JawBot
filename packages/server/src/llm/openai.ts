@@ -1,6 +1,12 @@
 import type { PlannedAction } from "@jawbot/shared";
 import { isToolName } from "@jawbot/shared";
-import type { LlmClient, PlanRequest, PlanResult, ReplyRequest } from "./types.js";
+import type {
+  LlmClient,
+  PlanRequest,
+  PlanResult,
+  ReplyRequest,
+  ResolveCommandRequest,
+} from "./types.js";
 
 interface ChatCompletionResponse {
   choices?: Array<{ message?: { content?: string } }>;
@@ -102,6 +108,29 @@ If failed, say so plainly. Return plain text only.`;
     return trimmed.length ? trimmed : null;
   }
 
+  async resolveCommand(req: ResolveCommandRequest): Promise<string> {
+    const system = `You turn a general step template into ONE concrete shell command for a Linux machine.
+Use the provided context values (e.g. branch, output directory) and the user's message to fill in specifics.
+Prefer the context/user values over anything hardcoded in the template.
+Output ONLY the command — no prose, no markdown, no backticks. Multiple statements may be joined with ';' or '&&'.`;
+
+    const user = JSON.stringify({
+      skill: req.skillName,
+      task: req.taskName,
+      step: req.stepName,
+      template: req.template,
+      context: req.context,
+      userMessage: req.userMessage,
+      playbook: req.skillContext,
+    });
+
+    const content = await this.complete([
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ]);
+    return cleanCommand(content);
+  }
+
   private async complete(
     messages: Array<{ role: string; content: string }>,
     opts?: { json?: boolean },
@@ -185,4 +214,14 @@ function parsePlan(content: string): PlanResult {
 function stripFences(text: string): string {
   const m = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   return (m?.[1] ?? text).trim();
+}
+
+/** Strip code fences, wrapping backticks, and a leading shell prompt. */
+export function cleanCommand(text: string): string {
+  let out = text.trim();
+  const fenced = out.match(/```(?:[a-zA-Z]+)?\s*([\s\S]*?)```/);
+  if (fenced) out = fenced[1]!.trim();
+  if (out.startsWith("`") && out.endsWith("`")) out = out.slice(1, -1).trim();
+  out = out.replace(/^\$\s+/, "");
+  return out.trim();
 }

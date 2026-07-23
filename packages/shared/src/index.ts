@@ -113,10 +113,16 @@ export function isToolName(value: unknown): value is ToolName {
 /* tracked for status updates.                                                */
 /* -------------------------------------------------------------------------- */
 
-/** One command in a skill task. Executed on the Linux runtime. */
+/**
+ * One step in a skill task. `template` is a GENERAL template — it is NOT run
+ * verbatim when an LLM planner is configured. The LLM resolves the actual shell
+ * command from this template plus the task/skill `params` (branch, output dir,
+ * …) and the user's message. With the heuristic planner (no LLM) the template
+ * runs as-is. There is deliberately no rule-based placeholder substitution.
+ */
 export interface SkillTaskStep {
   name: string;
-  command: string;
+  template: string;
   cwd?: string;
   timeoutMs?: number;
 }
@@ -128,6 +134,8 @@ export interface SkillTask {
   description: string;
   /** Natural-language phrases that trigger this task. */
   triggers: string[];
+  /** Context values (with defaults) handed to the LLM to resolve commands. */
+  params: Record<string, string>;
   steps: SkillTaskStep[];
 }
 
@@ -140,20 +148,24 @@ export interface Skill {
   triggers: string[];
   /** Plain-text playbook / context handed to the planner. */
   context: string;
+  /** Skill-wide context values (with defaults); tasks may override. */
+  params: Record<string, string>;
   tasks: SkillTask[];
 }
 
-/** Lightweight skill view for API/listing (omits raw step commands). */
+/** Lightweight skill view for API/listing (omits raw step templates). */
 export interface SkillDescriptor {
   id: string;
   name: string;
   description: string;
   triggers: string[];
+  params: Record<string, string>;
   tasks: Array<{
     id: string;
     name: string;
     description: string;
     triggers: string[];
+    params: Record<string, string>;
     stepCount: number;
   }>;
 }
@@ -193,11 +205,13 @@ export function toSkillDescriptor(skill: Skill): SkillDescriptor {
     name: skill.name,
     description: skill.description,
     triggers: skill.triggers,
+    params: skill.params,
     tasks: skill.tasks.map((t) => ({
       id: t.id,
       name: t.name,
       description: t.description,
       triggers: t.triggers,
+      params: t.params,
       stepCount: t.steps.length,
     })),
   };

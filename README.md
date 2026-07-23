@@ -71,27 +71,41 @@ id: my-skill                      # optional; defaults to the file name
 name: My Skill
 description: one-line summary
 triggers: foo, foo thing          # comma-separated
+param: output_dir = out/Default   # context values (with defaults)
+param: branch = main
 
 [context]
 Free-form plain-text playbook handed to the planner as context.
 Everything up to the next [section] is kept verbatim.
 
-[task setup]
-name: My setup
+[task build]
+name: My build
 description: what this task does
-triggers: setup, set up, install
+triggers: build, compile
+param: apk_target = my_apk         # task params override skill params
 
-step: First step name
-command: echo "runs on the Linux runtime via run_command"
-timeout: 600                      # seconds (or timeoutMs: for milliseconds)
+step: Configure
+template: gn gen out/Default --args='target_os="android"'
+timeout: 600                       # seconds (or timeoutMs: for milliseconds)
 
-step: Second step
-command: make -j
-cwd: /some/dir                    # optional working directory
+step: Compile
+template: autoninja -C out/Default my_apk
+cwd: /some/dir                     # optional working directory
 ```
 
 Lines starting with `#` are comments (except inside `[context]`). Steps run
 sequentially; the run stops and reports on the first failing step.
+
+#### Templates, params, and command resolution
+
+Step `template:` (alias `command:`) is a **general template**, not necessarily
+the literal command. When an LLM planner (`openai` / `beta`) is configured, the
+LLM produces the **actual** command for each step from the template + the
+declared `param` context (branch, output directory, …) + your triggering
+message — so "build chromium on branch main into out/Release" can change the
+output dir and branch. There is **no rule-based placeholder substitution**; the
+LLM decides. With the heuristic planner (no LLM) the template runs verbatim, so
+write templates that are runnable as-is with the default params.
 
 ### Headful execution
 

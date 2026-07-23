@@ -6,10 +6,12 @@ import type {
   SkillRun,
   SkillRunStep,
   SkillTask,
+  SkillTaskStep,
 } from "@jawbot/shared";
 import type { ChatBus } from "../chat/bus.js";
 import type { EventBus } from "../events/bus.js";
 import type { JobStore } from "../jobs/store.js";
+import type { LlmClient } from "../llm/types.js";
 import type { LinuxRuntime } from "../runtime/linux.js";
 import type { SessionStore } from "../sessions/store.js";
 import type { SkillRunStore } from "./runs.js";
@@ -30,14 +32,21 @@ export class SkillRunner {
     private readonly jobEvents: EventBus,
     private readonly chat: ChatBus,
     private readonly sessions: SessionStore,
+    private readonly llm: LlmClient,
   ) {}
 
-  start(sessionId: string, skill: Skill, task: SkillTask): SkillRun {
+  start(
+    sessionId: string,
+    skill: Skill,
+    task: SkillTask,
+    triggerMessage = "",
+  ): SkillRun {
     const now = new Date().toISOString();
+    // Resolved commands are filled in as each step runs.
     const steps: SkillRunStep[] = task.steps.map((step, index) => ({
       index,
       name: step.name,
-      command: step.command,
+      command: "",
       status: "queued",
     }));
 
@@ -55,7 +64,7 @@ export class SkillRunner {
     this.runs.upsert(run);
 
     // Fire-and-forget; progress is surfaced via chat + status endpoints.
-    void this.execute(run.id, skill, task);
+    void this.execute(run.id, skill, task, triggerMessage);
     return run;
   }
 
@@ -63,6 +72,7 @@ export class SkillRunner {
     runId: string,
     skill: Skill,
     task: SkillTask,
+    triggerMessage: string,
   ): Promise<void> {
     const run = this.runs.get(runId);
     if (!run) return;
@@ -73,14 +83,23 @@ export class SkillRunner {
       startedAt: new Date().toISOString(),
     });
 
+    // Context handed to the LLM to resolve each command. No substitution here.
+    const context = { ...skill.params, ...task.params };
+
     for (const step of task.steps) {
       const current = this.runs.get(runId);
       const stepRef = current?.steps.find((s) => s.name === step.name);
       const index = stepRef?.index ?? 0;
 
-      const job = this.createJob(sessionId, step.command, runId);
+      // Let the LLM produce the actual command from the general template +
+      // context (branch, output dir, …) + the user's message. If no LLM
+      // supports this (heuristic planner), run the template verbatim.
+      const command = await this.resolveCommand(skill, task, step, context, triggerMessage);
+
+      const job = this.createJob(sessionId, command, runId);
       this.runs.updateStep(runId, index, {
         status: "running",
+        command,
         jobId: job.id,
         startedAt: new Date().toISOString(),
       });
@@ -88,13 +107,14 @@ export class SkillRunner {
         skillRunId: runId,
         step: step.name,
         phase: "executing",
+        command,
       });
 
       // Headful: run each step in a visible terminal so interactive prompts
       // (e.g. sudo during Chromium build-deps) have a real TTY the logged-in
       // user can answer. Keep the window open so progress is watchable.
       const result = await this.runtime.runVisible({
-        command: step.command,
+        command,
         cwd: step.cwd,
         timeoutMs: step.timeoutMs,
         title: `${skill.name} · ${step.name}`,
@@ -155,6 +175,33 @@ export class SkillRunner {
         task.steps.length === 1 ? "" : "s"
       } succeeded.`,
     );
+  }
+
+  private async resolveCommand(
+    skill: Skill,
+    task: SkillTask,
+    step: SkillTaskStep,
+    context: Record<string, string>,
+    triggerMessage: string,
+  ): Promise<string> {
+    if (!this.llm.resolveCommand) return step.template;
+    try {
+      const resolved = (
+        await this.llm.resolveCommand({
+          skillName: skill.name,
+          skillContext: skill.context,
+          taskName: task.name,
+          stepName: step.name,
+          template: step.template,
+          context,
+          userMessage: triggerMessage,
+        })
+      ).trim();
+      return resolved || step.template;
+    } catch {
+      // Never block the run on resolution — fall back to the template as-is.
+      return step.template;
+    }
   }
 
   private createJob(
