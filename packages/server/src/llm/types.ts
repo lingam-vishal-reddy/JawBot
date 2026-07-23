@@ -55,6 +55,20 @@ export interface ResolveCommandRequest {
   userMessage: string;
 }
 
+/**
+ * Ask the planner to turn failing command output into a concise, human-readable
+ * error message (one sentence). The exit code alone is not useful to the user.
+ */
+export interface SummarizeErrorRequest {
+  command: string;
+  /** Captured stdout+stderr from the failed command (may be truncated). */
+  output: string;
+  exitCode: number | null;
+  skillName?: string;
+  taskName?: string;
+  stepName?: string;
+}
+
 export interface LlmClient {
   /** Decide whether to act, what tools to call, and whether to speak. */
   plan(req: PlanRequest): Promise<PlanResult>;
@@ -66,4 +80,10 @@ export interface LlmClient {
    * the template verbatim.
    */
   resolveCommand?(req: ResolveCommandRequest): Promise<string>;
+  /**
+   * Optional: summarize failing command output into one concise error line.
+   * When absent (heuristic planner) the caller falls back to the last
+   * meaningful output line.
+   */
+  summarizeError?(req: SummarizeErrorRequest): Promise<string>;
 }

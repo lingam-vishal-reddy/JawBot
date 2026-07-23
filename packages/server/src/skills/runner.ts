@@ -13,7 +13,7 @@ import type { ChatBus } from "../chat/bus.js";
 import type { EventBus } from "../events/bus.js";
 import type { JobStore } from "../jobs/store.js";
 import type { LlmClient } from "../llm/types.js";
-import type { LinuxRuntime } from "../runtime/linux.js";
+import type { LinuxRuntime, RunVisibleResult } from "../runtime/linux.js";
 import type { SessionStore } from "../sessions/store.js";
 import type { SkillRunStore } from "./runs.js";
 
@@ -141,9 +141,8 @@ export class SkillRunner {
         });
         this.runs.updateStep(runId, index, { status: "succeeded", finishedAt });
       } else {
-        const error = result.timedOut
-          ? `timed out after ${step.timeoutMs ?? 120_000}ms`
-          : `exited with code ${result.exitCode ?? "null"}`;
+        // Concise, human-readable error (LLM-summarized) — not just the exit code.
+        const error = await this.describeFailure(skill, task, step, command, result);
         this.jobs.update(job.id, { status: "failed", finishedAt, error });
         this.jobEvents.emit(job.id, sessionId, "job.failed", { error });
         this.runs.updateStep(runId, index, {
@@ -160,7 +159,7 @@ export class SkillRunner {
           sessionId,
           `${skill.name} · ${task.name} failed at step ${index + 1}/${
             task.steps.length
-          } (${step.name}): ${error}.`,
+          } (${step.name}): ${error}`,
         );
         return;
       }
@@ -207,6 +206,41 @@ export class SkillRunner {
     }
   }
 
+  private async describeFailure(
+    skill: Skill,
+    task: SkillTask,
+    step: SkillTaskStep,
+    command: string,
+    result: RunVisibleResult,
+  ): Promise<string> {
+    if (result.timedOut) {
+      const secs = Math.round((step.timeoutMs ?? 120_000) / 1000);
+      return `timed out after ${secs}s`;
+    }
+    const output = result.stdout ?? "";
+    if (this.llm.summarizeError) {
+      try {
+        const summary = (
+          await this.llm.summarizeError({
+            command,
+            output,
+            exitCode: result.exitCode,
+            skillName: skill.name,
+            taskName: task.name,
+            stepName: step.name,
+          })
+        ).trim();
+        if (summary) return summary;
+      } catch {
+        /* fall through to output-based fallback */
+      }
+    }
+    return (
+      lastMeaningfulLine(output) ||
+      `command failed (exit ${result.exitCode ?? "?"})`
+    );
+  }
+
   private createJob(
     sessionId: string,
     command: string,
@@ -241,6 +275,20 @@ export class SkillRunner {
     this.sessions.addMessage(message);
     this.chat.publish(message);
   }
+}
+
+/** Fallback (no LLM): last meaningful line of output, preferring error-ish lines. */
+function lastMeaningfulLine(output: string): string {
+  const lines = output
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return "";
+  const rx =
+    /(error|fatal|not found|no such|denied|permission|cannot|unable|failed|traceback|exception)/i;
+  const hit = [...lines].reverse().find((l) => rx.test(l));
+  const line = hit ?? lines[lines.length - 1]!;
+  return line.length > 300 ? `${line.slice(0, 300)}…` : line;
 }
 
 /** Human-readable status summary for a session's skill runs. */

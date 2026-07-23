@@ -1,11 +1,13 @@
 import type { Job, ToolName } from "@jawbot/shared";
 import type { EventBus } from "../events/bus.js";
+import type { LlmClient } from "../llm/types.js";
 import type { LinuxRuntime } from "../runtime/linux.js";
 
 export interface ToolContext {
   job: Job;
   runtime: LinuxRuntime;
   events: EventBus;
+  llm: LlmClient;
 }
 
 export interface ToolResult {

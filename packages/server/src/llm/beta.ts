@@ -6,8 +6,9 @@ import type {
   PlanResult,
   ReplyRequest,
   ResolveCommandRequest,
+  SummarizeErrorRequest,
 } from "./types.js";
-import { cleanCommand } from "./openai.js";
+import { cleanCommand, tailText } from "./openai.js";
 
 /**
  * Beta response envelope: a single string `content`.
@@ -163,6 +164,24 @@ Output ONLY the command — no prose, no markdown, no backticks. Multiple statem
 
     const content = await this.generate(systemPrompt, contents);
     return cleanCommand(content);
+  }
+
+  async summarizeError(req: SummarizeErrorRequest): Promise<string> {
+    const systemPrompt = `A shell command failed. Write ONE concise, human-readable sentence describing what went wrong, based on the output.
+Focus on the actual cause (missing dependency, permission, not found, syntax, network, etc.).
+Do NOT just restate the exit code. No markdown, no backticks, no prose beyond the sentence. Max ~200 characters.`;
+
+    const contents = [
+      JSON.stringify({
+        step: req.stepName,
+        command: req.command,
+        exitCode: req.exitCode,
+        output: tailText(req.output, 4000),
+      }),
+    ];
+
+    const content = await this.generate(systemPrompt, contents);
+    return content.replace(/\s+/g, " ").trim().slice(0, 300);
   }
 
   private async generate(

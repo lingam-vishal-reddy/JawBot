@@ -4,7 +4,7 @@ import type { Tool } from "./types.js";
 export const runCommandTool: Tool = {
   name: "run_command",
   description: "Run a shell command on the Linux machine (visible terminal)",
-  async run({ job, runtime, events }) {
+  async run({ job, runtime, events, llm }) {
     const input = job.input as unknown as RunCommandInput;
     if (!input.command?.trim()) {
       throw new Error("run_command requires input.command");
@@ -46,9 +46,27 @@ export const runCommandTool: Tool = {
       );
     }
     if ((result.exitCode ?? 1) !== 0) {
-      const err = new Error(
-        `Command exited with code ${result.exitCode ?? "null"}`,
-      );
+      // Concise, human-readable error (LLM-summarized) — not just the exit code.
+      let message = "";
+      if (llm.summarizeError) {
+        try {
+          message = (
+            await llm.summarizeError({
+              command: input.command,
+              output: result.stdout,
+              exitCode: result.exitCode,
+            })
+          ).trim();
+        } catch {
+          /* fall through */
+        }
+      }
+      if (!message) {
+        message =
+          lastMeaningfulLine(result.stdout) ||
+          `command failed (exit ${result.exitCode ?? "?"})`;
+      }
+      const err = new Error(message);
       (err as Error & { result: typeof result }).result = result;
       throw err;
     }
@@ -72,4 +90,18 @@ export const runCommandTool: Tool = {
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
   return `${text.slice(0, max)}…`;
+}
+
+/** Fallback (no LLM): last meaningful output line, preferring error-ish lines. */
+function lastMeaningfulLine(output: string): string {
+  const lines = output
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return "";
+  const rx =
+    /(error|fatal|not found|no such|denied|permission|cannot|unable|failed|traceback|exception)/i;
+  const hit = [...lines].reverse().find((l) => rx.test(l));
+  const line = hit ?? lines[lines.length - 1]!;
+  return line.length > 300 ? `${line.slice(0, 300)}…` : line;
 }

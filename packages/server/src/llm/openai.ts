@@ -6,6 +6,7 @@ import type {
   PlanResult,
   ReplyRequest,
   ResolveCommandRequest,
+  SummarizeErrorRequest,
 } from "./types.js";
 
 interface ChatCompletionResponse {
@@ -131,6 +132,25 @@ Output ONLY the command — no prose, no markdown, no backticks. Multiple statem
     return cleanCommand(content);
   }
 
+  async summarizeError(req: SummarizeErrorRequest): Promise<string> {
+    const system = `A shell command failed. Write ONE concise, human-readable sentence describing what went wrong, based on the output.
+Focus on the actual cause (missing dependency, permission, not found, syntax, network, etc.).
+Do NOT just restate the exit code. No markdown, no backticks, no prose beyond the sentence. Max ~200 characters.`;
+
+    const user = JSON.stringify({
+      step: req.stepName,
+      command: req.command,
+      exitCode: req.exitCode,
+      output: tailText(req.output, 4000),
+    });
+
+    const content = await this.complete([
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ]);
+    return content.replace(/\s+/g, " ").trim().slice(0, 300);
+  }
+
   private async complete(
     messages: Array<{ role: string; content: string }>,
     opts?: { json?: boolean },
@@ -214,6 +234,11 @@ function parsePlan(content: string): PlanResult {
 function stripFences(text: string): string {
   const m = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   return (m?.[1] ?? text).trim();
+}
+
+/** Keep only the last `max` characters of text (for large command output). */
+export function tailText(text: string, max: number): string {
+  return text.length <= max ? text : text.slice(text.length - max);
 }
 
 /** Strip code fences, wrapping backticks, and a leading shell prompt. */

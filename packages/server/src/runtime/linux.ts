@@ -208,8 +208,11 @@ export class LinuxRuntime {
       ? `echo; echo "[JawBot] exit=$ec — press Enter to close"; read`
       : `if [ "$ec" != "0" ]; then echo; echo "[JawBot] exit=$ec — press Enter to close"; read; fi`;
 
-    // Runs inside the visible terminal via `bash -lc`.
+    // Runs inside the visible terminal via an interactive shell so ~/.bashrc is
+    // loaded (like a normal terminal). `set +H` disables history expansion so a
+    // literal `!` in a command isn't mangled by interactive mode.
     const innerScript = [
+      `set +H`,
       `cd ${shellQuote(cwd)}`,
       `touch ${shellQuote(logFile)}`,
       `set -o pipefail`,
@@ -329,30 +332,32 @@ export class LinuxRuntime {
     opts: { cwd: string; title: string },
     innerScript: string,
   ): string[] {
+    // Interactive shell (`-i`) so ~/.bashrc is sourced like a normal terminal.
     if (
       emulator.includes("xfce4-terminal") ||
       emulator === "x-terminal-emulator"
     ) {
+      // No `--window`: options before it would configure a first (default)
+      // window and `--window` would open a SECOND one — that's what caused two
+      // terminals to appear. A single default window runs the command.
       return [
         `--working-directory=${opts.cwd}`,
         `--title=${opts.title}`,
-        "--window",
         "-e",
-        `bash -lc ${shellQuote(innerScript)}`,
+        `bash -ic ${shellQuote(innerScript)}`,
       ];
     }
     if (emulator.includes("gnome-terminal")) {
       return [
         `--working-directory=${opts.cwd}`,
-        "--window",
         "--",
         "bash",
-        "-lc",
+        "-ic",
         innerScript,
       ];
     }
     // xterm-style
-    return ["-T", opts.title, "-e", `bash -lc ${shellQuote(innerScript)}`];
+    return ["-T", opts.title, "-e", `bash -ic ${shellQuote(innerScript)}`];
   }
 
   private buildTerminalArgs(

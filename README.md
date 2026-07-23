@@ -119,6 +119,14 @@ TTY, so a logged-in user can see the work and type a password when asked.
 Output is still streamed back to chat/telemetry; step windows stay open so you
 can watch progress, and a failing window stays open showing the error.
 
+Details:
+- Commands run in an **interactive** shell (`bash -ic`), so your `~/.bashrc`
+  is loaded just like a normal terminal.
+- Each command opens **one** terminal window (no stray extra window).
+- On failure the user-facing message is a **concise, LLM-summarized error**
+  (not just an exit code); without an LLM it falls back to the last meaningful
+  output line.
+
 ## Quick start
 
 ```bash

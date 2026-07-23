@@ -240,6 +240,7 @@ export class Orchestrator {
         job,
         runtime: this.runtime,
         events: this.jobEvents,
+        llm: this.llm,
       });
 
       const completed =
