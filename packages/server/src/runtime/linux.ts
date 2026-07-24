@@ -11,6 +11,9 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createLogger } from "../log.js";
+
+const log = createLogger("runtime");
 
 export interface OpenTerminalOptions {
   cwd?: string;
@@ -305,6 +308,7 @@ export class LinuxRuntime {
     });
     child.unref();
     const pid = child.pid ?? 0;
+    log.info("opened terminal session", { emulator, pid, cwd, title });
 
     // Keep a read-write fd open so writes never block and the reader never
     // sees EOF (loop stays alive until __DONE__).
@@ -337,7 +341,9 @@ export class LinuxRuntime {
       const codeFile = join(dir, `${id}.code`);
       const timeoutMs = opts.timeoutMs ?? 120_000;
 
+      log.info("run command", { pid, seq: id, timeoutMs, command: cmd });
       writeSync(keepFd, `${id} ${cmd}\n`);
+      const runStart = Date.now();
 
       return new Promise<VisibleStepResult>((resolvePromise) => {
         let output = "";
@@ -370,6 +376,12 @@ export class LinuxRuntime {
             clearInterval(timer);
             tail();
             const code = Number.parseInt(raw, 10);
+            log.info("command finished", {
+              pid,
+              seq: id,
+              exitCode: code,
+              ms: Date.now() - runStart,
+            });
             resolvePromise({
               exitCode: Number.isNaN(code) ? null : code,
               output,
@@ -381,6 +393,12 @@ export class LinuxRuntime {
             clearInterval(timer);
             tail();
             killGroup();
+            log.warn("command timed out", {
+              pid,
+              seq: id,
+              timeoutMs,
+              ms: Date.now() - runStart,
+            });
             resolvePromise({ exitCode: null, output, timedOut: true });
           }
         }, pollMs);

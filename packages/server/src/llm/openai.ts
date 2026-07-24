@@ -8,6 +8,9 @@ import type {
   ResolveCommandRequest,
   SummarizeErrorRequest,
 } from "./types.js";
+import { createLogger } from "../log.js";
+
+const log = createLogger("llm:openai");
 
 interface ChatCompletionResponse {
   choices?: Array<{ message?: { content?: string } }>;
@@ -162,6 +165,8 @@ Do NOT just restate the exit code. No markdown, no backticks, no prose beyond th
     messages: Array<{ role: string; content: string }>,
     opts?: { json?: boolean },
   ): Promise<string> {
+    const start = Date.now();
+    log.debug("request", { model: this.model, messages: messages.length });
     const res = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -178,10 +183,12 @@ Do NOT just restate the exit code. No markdown, no backticks, no prose beyond th
 
     if (!res.ok) {
       const body = await res.text();
+      log.error("request failed", { status: res.status, ms: Date.now() - start });
       throw new Error(`OpenAI error ${res.status}: ${body}`);
     }
 
     const data = (await res.json()) as ChatCompletionResponse;
+    log.debug("response", { ms: Date.now() - start });
     return data.choices?.[0]?.message?.content ?? "";
   }
 }

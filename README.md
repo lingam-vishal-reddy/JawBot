@@ -179,7 +179,30 @@ The planner client is chosen at runtime via `JAWBOT_LLM`:
   `modelIds` carries the single configurable `BETA_MODEL`, `contents` is the
   conversation as plain strings, and `content` is the returned text.
 
-Also: `JAWBOT_PORT`, `DISPLAY`
+Also: `JAWBOT_PORT`, `DISPLAY`, `JAWBOT_LOG_LEVEL` (`debug|info|warn|error`,
+default `info`)
+
+### Logging
+
+The backend logs structured lines to stdout/stderr:
+
+```text
+2026-07-24T05:33:28.373Z INFO  [orchestrator] skill trigger {"skill":"echodemo","task":"go"}
+```
+
+Scopes include `server`, `http` (one line per request with status + ms),
+`orchestrator`, `skill-runner`, `runtime` (terminal + per-command lifecycle),
+and `llm:*`. Set `JAWBOT_LOG_LEVEL=debug` for LLM request/response timing.
+
+### Long-running commands
+
+Work runs in the background so the UI returns immediately:
+
+- Skill tasks are already async — triggering one returns an acknowledgement and
+  progress is posted to chat (a `✓` line after each step) plus a final summary.
+- A chat `run_command` also runs in the background: you get an immediate "On it…"
+  ack, and the result is posted to chat when the command finishes.
+- Ask "status" any time for the state of skill runs and recent commands.
 
 #### Config / `.env`
 

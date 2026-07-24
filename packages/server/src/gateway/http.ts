@@ -9,6 +9,9 @@ import type { ToolRegistry } from "../tools/registry.js";
 import type { SkillRegistry } from "../skills/registry.js";
 import type { SkillRunStore } from "../skills/runs.js";
 import type { SkillRunner } from "../skills/runner.js";
+import { createLogger } from "../log.js";
+
+const log = createLogger("http");
 
 export function createHttpApp(deps: {
   orchestrator: Orchestrator;
@@ -23,6 +26,25 @@ export function createHttpApp(deps: {
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: "1mb" }));
+
+  // Request logging.
+  app.use((req, res, next) => {
+    const start = Date.now();
+    res.on("finish", () => {
+      const line = {
+        status: res.statusCode,
+        ms: Date.now() - start,
+      };
+      if (res.statusCode >= 500) {
+        log.error(`${req.method} ${req.path}`, line);
+      } else if (res.statusCode >= 400) {
+        log.warn(`${req.method} ${req.path}`, line);
+      } else {
+        log.info(`${req.method} ${req.path}`, line);
+      }
+    });
+    next();
+  });
 
   app.get("/health", (_req, res) => {
     res.json({

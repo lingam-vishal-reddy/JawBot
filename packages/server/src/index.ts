@@ -14,6 +14,9 @@ import { Orchestrator } from "./orchestrator/index.js";
 import { createHttpApp } from "./gateway/http.js";
 import { attachChatSocket } from "./gateway/ws.js";
 import { createLlmClient } from "./llm/index.js";
+import { createLogger } from "./log.js";
+
+const log = createLogger("server");
 
 const PORT = Number(process.env.JAWBOT_PORT ?? 8787);
 const HOST = process.env.JAWBOT_HOST ?? "0.0.0.0";
@@ -64,20 +67,19 @@ const server = createServer(app);
 attachChatSocket(server, chat);
 
 server.listen(PORT, HOST, () => {
-  console.log(`[jawbot] gateway listening on http://${HOST}:${PORT}`);
-  console.log(`[jawbot] chat ws://localhost:${PORT}/ws/chat`);
-  console.log(`[jawbot] DISPLAY=${process.env.DISPLAY ?? ":1"}`);
-  console.log(`[jawbot] LLM=${process.env.JAWBOT_LLM ?? "heuristic"}`);
-  console.log(
-    `[jawbot] tools: ${tools.list().map((t) => t.name).join(", ")}`,
-  );
-  const skillIds = skills.list().map((s) => s.id);
-  console.log(
-    `[jawbot] skills (${loaded.dir}): ${
-      skillIds.length ? skillIds.join(", ") : "none"
-    }`,
-  );
+  log.info(`gateway listening`, {
+    http: `http://${HOST}:${PORT}`,
+    ws: `ws://${HOST}:${PORT}/ws/chat`,
+    display: process.env.DISPLAY ?? ":1",
+    llm: process.env.JAWBOT_LLM ?? "heuristic",
+    logLevel: process.env.JAWBOT_LOG_LEVEL ?? "info",
+  });
+  log.info(`tools registered`, { tools: tools.list().map((t) => t.name) });
+  log.info(`skills loaded`, {
+    dir: loaded.dir,
+    skills: skills.list().map((s) => s.id),
+  });
   for (const e of loaded.errors) {
-    console.warn(`[jawbot] skill load warning (${e.file}): ${e.error}`);
+    log.warn(`skill load warning`, { file: e.file, error: e.error });
   }
 });

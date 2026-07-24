@@ -1,6 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createLogger } from "./log.js";
+
+const log = createLogger("env");
 
 /**
  * Load `.env` before anything reads `process.env`.
@@ -65,11 +68,12 @@ export function loadEnv(): void {
     if (!existsSync(file)) continue;
     try {
       const applied = applyEnvFile(file);
-      console.log(`[jawbot] loaded env from ${file} (${applied} var(s))`);
+      log.info(`loaded env file`, { file, applied });
     } catch (err) {
-      console.warn(
-        `[jawbot] failed to load env file ${file}: ${(err as Error).message}`,
-      );
+      log.warn(`failed to load env file`, {
+        file,
+        error: (err as Error).message,
+      });
     }
   }
 }

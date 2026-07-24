@@ -9,6 +9,9 @@ import type {
   SummarizeErrorRequest,
 } from "./types.js";
 import { cleanCommand, tailText } from "./openai.js";
+import { createLogger } from "../log.js";
+
+const log = createLogger("llm:beta");
 
 /**
  * Beta response envelope: a single string `content`.
@@ -195,6 +198,8 @@ Do NOT just restate the exit code. No markdown, no backticks, no prose beyond th
     systemPrompt: string,
     contents: string[],
   ): Promise<string> {
+    const start = Date.now();
+    log.debug("request", { endpoint: this.endpoint(), model: this.modelId });
     const res = await fetch(this.endpoint(), {
       method: "POST",
       headers: {
@@ -212,10 +217,12 @@ Do NOT just restate the exit code. No markdown, no backticks, no prose beyond th
 
     if (!res.ok) {
       const body = await res.text();
+      log.error("request failed", { status: res.status, ms: Date.now() - start });
       throw new Error(`Beta LLM error ${res.status}: ${body}`);
     }
 
     const data = (await res.json()) as BetaResponse;
+    log.debug("response", { ms: Date.now() - start });
     return data.content ?? "";
   }
 }

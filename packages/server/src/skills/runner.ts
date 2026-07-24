@@ -14,6 +14,9 @@ import type { EventBus } from "../events/bus.js";
 import type { JobStore } from "../jobs/store.js";
 import type { LlmClient, PreviousStepResult } from "../llm/types.js";
 import type { LinuxRuntime, VisibleStepResult } from "../runtime/linux.js";
+import { createLogger } from "../log.js";
+
+const log = createLogger("skill-runner");
 import type { SessionStore } from "../sessions/store.js";
 import type { SkillRunStore } from "./runs.js";
 
@@ -83,6 +86,12 @@ export class SkillRunner {
       status: "running",
       startedAt: new Date().toISOString(),
     });
+    log.info("skill run started", {
+      runId,
+      skill: skill.id,
+      task: task.id,
+      steps: task.steps.length,
+    });
 
     const context = { ...skill.params, ...task.params };
 
@@ -151,11 +160,32 @@ export class SkillRunner {
             exitCode: result.exitCode,
           });
           this.runs.updateStep(runId, i, { status: "succeeded", finishedAt });
+          log.info("step succeeded", {
+            runId,
+            skill: skill.id,
+            task: task.id,
+            step: i + 1,
+            of: task.steps.length,
+          });
+          // Status update after each command completes.
+          this.postChat(
+            sessionId,
+            `✓ ${skill.name} · ${task.name} — step ${i + 1}/${
+              task.steps.length
+            } done: ${step.name}`,
+          );
           continue;
         }
 
         // Failure → concise LLM error, stop the task (terminal stays for user).
         const error = await this.describeFailure(skill, task, step, command, result);
+        log.warn("step failed", {
+          runId,
+          skill: skill.id,
+          task: task.id,
+          step: i + 1,
+          error,
+        });
         this.jobs.update(job.id, { status: "failed", finishedAt, error });
         this.jobEvents.emit(job.id, sessionId, "job.failed", { error });
         this.runs.updateStep(runId, i, { status: "failed", finishedAt, error });
@@ -177,6 +207,7 @@ export class SkillRunner {
         status: "succeeded",
         finishedAt: new Date().toISOString(),
       });
+      log.info("skill run succeeded", { runId, skill: skill.id, task: task.id });
       this.postChat(
         sessionId,
         `Finished ${skill.name} · ${task.name} — all ${task.steps.length} step${
